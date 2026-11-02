@@ -1,0 +1,15 @@
+{
+  "name": "Egy lyuk a földben",
+  "short_name": "Egy lyuk",
+  "description": "Hobbitos ásós játék két játékosnak, osztott képernyővel.",
+  "lang": "hu",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#161632",
+  "theme_color": "#2a4220",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

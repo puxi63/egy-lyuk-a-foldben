@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="hu">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Egy lyuk a földben</title>
+<!-- Installable PWA (GitHub Pages): the manifest and the service worker (sw.js) that keeps the game playable offline. -->
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<meta name="theme-color" content="#2a4220">
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<!-- Fonts (SIL OFL 1.1): Uncial Antiqua (titles), Almendra (headings), EB Garamond (text), Caveat (chalk), Noto Sans Runic
+     (the runes of Thrór's map). Local serif fallbacks are in ui.css; the game works without them. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Almendra:ital@0;1&family=Caveat:wght@500;700&family=EB+Garamond:ital,wght@0,400;0,600;1,400&family=Noto+Sans+Runic&family=Uncial+Antiqua&display=swap">
+<link rel="stylesheet" href="assets/ui/ui.css">
+<!-- The loading screen, the pause, the settings desk, the credits (NOTES-21-screens). -->
+<link rel="stylesheet" href="assets/ui/screens.css">
+</head>
+<body>
+<canvas id="view"></canvas>
+<div id="huds"></div>
+<div id="start">
+  <!-- Bag End's round green door at dusk, Gandalf's mark glowing on it (TERV 0.12 Címképernyő). -->
+  <svg class="scene" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+    <defs>
+      <linearGradient id="st-sky" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#161632"/><stop offset=".35" stop-color="#3a2d58"/><stop offset=".6" stop-color="#8a4f6a"/><stop offset=".78" stop-color="#d88a5a"/><stop offset="1" stop-color="#f0b46a"/>
+      </linearGradient>
+      <linearGradient id="st-hill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3e5a2c"/><stop offset=".5" stop-color="#2a4220"/><stop offset="1" stop-color="#142410"/></linearGradient>
+      <linearGradient id="st-far" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3a3a58"/><stop offset="1" stop-color="#262a3a"/></linearGradient>
+      <radialGradient id="st-door" cx="45%" cy="40%" r="65%"><stop offset="0" stop-color="#3f7a44"/><stop offset=".7" stop-color="#2a5a30"/><stop offset="1" stop-color="#173a1c"/></radialGradient>
+      <radialGradient id="st-knob" cx="35%" cy="30%" r="70%"><stop offset="0" stop-color="#fff2b0"/><stop offset=".5" stop-color="#d8a83a"/><stop offset="1" stop-color="#6a4a10"/></radialGradient>
+      <radialGradient id="st-warm" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#ffd890" stop-opacity=".9"/><stop offset=".4" stop-color="#ffb060" stop-opacity=".35"/><stop offset="1" stop-color="#ff9040" stop-opacity="0"/></radialGradient>
+      <radialGradient id="st-win" cx="50%" cy="55%" r="60%"><stop offset="0" stop-color="#fff0b0"/><stop offset=".6" stop-color="#f0b050"/><stop offset="1" stop-color="#a0602a"/></radialGradient>
+      <radialGradient id="st-vig" cx="45%" cy="55%" r="75%"><stop offset=".55" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".7"/></radialGradient>
+      <clipPath id="st-doorclip"><circle cx="560" cy="585" r="168"/></clipPath>
+      <radialGradient id="st-markhalo" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#9fd4ff" stop-opacity=".55"/><stop offset="1" stop-color="#6aa8ff" stop-opacity="0"/></radialGradient>
+      <filter id="st-blur" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="6"/></filter>
+    </defs>
+    <rect width="1600" height="900" fill="url(#st-sky)"/>
+    <g fill="#fff8e0"><circle cx="210" cy="90" r="2"/><circle cx="420" cy="60" r="1.4"/><circle cx="760" cy="120" r="1.6"/><circle cx="980" cy="70" r="1.2"/><circle cx="1180" cy="140" r="1.5"/><circle cx="1380" cy="80" r="1.3"/><circle cx="1500" cy="190" r="1"/><circle cx="90" cy="210" r="1.2"/><circle cx="1260" cy="40" r="2.6" opacity=".9"/></g>
+    <!-- Distant Shire hills with lit round windows. -->
+    <path d="M0 470C160 400 300 380 460 420S760 380 900 410 1180 370 1360 400 1520 430 1600 420V900H0z" fill="url(#st-far)"/>
+    <circle cx="1060" cy="440" r="6" fill="#ffc870"/><circle cx="1290" cy="430" r="5" fill="#ffc870"/><circle cx="210" cy="455" r="5" fill="#ffc870"/>
+    <path d="M0 520C120 470 260 450 380 470 470 380 650 360 760 400 880 440 1000 470 1160 480 1360 490 1500 520 1600 540V900H0z" fill="url(#st-hill)"/>
+    <!-- Round window, warm light. -->
+    <circle cx="280" cy="620" r="70" fill="url(#st-warm)"/>
+    <circle cx="280" cy="620" r="46" fill="#5a3a1e"/><circle cx="280" cy="620" r="38" fill="url(#st-win)"/>
+    <path d="M280 582v76M242 620h76" stroke="#4a2c14" stroke-width="5"/>
+    <!-- Door frame and door. -->
+    <circle cx="560" cy="585" r="206" fill="#2a1a0c" opacity=".55"/>
+    <circle cx="560" cy="585" r="196" fill="#7a5630"/>
+    <g stroke="#4a3018" stroke-width="3">
+      <path d="M560 389v28M560 753v28M364 585h28M728 585h28M421 446l20 20M679 704l20 20M421 724l20-20M679 466l20-20M486 404l10 26M624 740l10 26M486 766l10-26M624 430l10-26M380 512l26 10M714 648l26 10M380 658l26-10M714 522l26-10"/>
+    </g>
+    <circle cx="560" cy="585" r="196" fill="none" stroke="#3a2410" stroke-width="5"/>
+    <circle cx="560" cy="585" r="170" fill="#3a2410"/>
+    <circle cx="560" cy="585" r="166" fill="url(#st-door)"/>
+    <g clip-path="url(#st-doorclip)" stroke="#173a1c" stroke-width="3" opacity=".8">
+      <path d="M440 400v380M480 400v380M520 400v380M600 400v380M640 400v380M680 400v380"/>
+    </g>
+    <circle cx="560" cy="585" r="150" fill="none" stroke="#1e4a24" stroke-width="2"/>
+    <g fill="#c8a04a"><circle cx="560" cy="450" r="4"/><circle cx="560" cy="720" r="4"/><circle cx="425" cy="585" r="4"/><circle cx="695" cy="585" r="4"/><circle cx="465" cy="490" r="3.5"/><circle cx="655" cy="680" r="3.5"/><circle cx="465" cy="680" r="3.5"/><circle cx="655" cy="490" r="3.5"/></g>
+    <!-- The brass knob in the middle of the door. -->
+    <circle cx="563" cy="590" r="20" fill="#0006"/>
+    <circle cx="560" cy="585" r="20" fill="url(#st-knob)" stroke="#5a3a0a" stroke-width="2"/>
+    <circle cx="553" cy="578" r="5" fill="#fff8d0" opacity=".7"/>
+    <!-- Gandalf's mark, scratched into the paint and glowing (NOTES-21-screens): the same sign as in the game, the "G" rune
+         of the futhorc on Thrór's map, two uneven crossing strokes (home-events/marks.js STROKES and RUNE: the door's upper
+         left, 0.36 R left and 0.3 R up of the centre, 0.3 R tall) [ellenőrizendő: the exact shape, as noted there]. -->
+    <g transform="translate(494 530)">
+      <g class="mark-halo"><circle r="46" fill="url(#st-markhalo)"/></g>
+      <g stroke="#14301a" stroke-width="7" stroke-linecap="round" fill="none"><path d="M-25.3 27.6L24.3-28.7M-23.2-26.5L27.6 25.4"/></g>
+      <g class="mark-glow" stroke="#9fdcff" stroke-width="9" stroke-linecap="round" fill="none" filter="url(#st-blur)"><path d="M-25.3 27.6L24.3-28.7M-23.2-26.5L27.6 25.4"/></g>
+      <g class="mark-line" stroke="#e8f8ff" stroke-width="2.6" stroke-linecap="round" fill="none"><path d="M-25.3 27.6L24.3-28.7M-23.2-26.5L27.6 25.4"/></g>
+    </g>
+    <!-- Lamp by the door. -->
+    <circle cx="800" cy="500" r="80" fill="url(#st-warm)"/>
+    <path d="M800 430v32" stroke="#2a1a0a" stroke-width="4"/>
+    <path d="M786 462h28l-4 34h-20z" fill="#ffd890" stroke="#2a1a0a" stroke-width="4"/><path d="M782 462h36M786 496h28" stroke="#2a1a0a" stroke-width="5"/>
+    <!-- Step, path and garden. -->
+    <path d="M400 790c40-14 280-14 320 0l14 22H386z" fill="#6a6258"/><path d="M386 812h348" stroke="#3a342c" stroke-width="4"/>
+    <g fill="#5a5448" stroke="#2a2620" stroke-width="2"><ellipse cx="560" cy="846" rx="70" ry="14"/><ellipse cx="520" cy="890" rx="80" ry="16"/></g>
+    <g fill="#1e3416"><ellipse cx="300" cy="800" rx="150" ry="60"/><ellipse cx="830" cy="805" rx="140" ry="56"/><ellipse cx="90" cy="760" rx="120" ry="70"/></g>
+    <g><circle cx="250" cy="770" r="7" fill="#e8c040"/><circle cx="290" cy="785" r="6" fill="#d85a6a"/><circle cx="330" cy="768" r="7" fill="#f0e8d8"/><circle cx="210" cy="790" r="6" fill="#d85a6a"/>
+       <circle cx="800" cy="780" r="7" fill="#e8c040"/><circle cx="845" cy="790" r="6" fill="#b070d0"/><circle cx="880" cy="772" r="6" fill="#f0e8d8"/><circle cx="760" cy="796" r="6" fill="#d85a6a"/>
+       <circle cx="70" cy="730" r="6" fill="#e8c040"/><circle cx="120" cy="745" r="6" fill="#f0e8d8"/></g>
+    <g stroke="#3a2a18" stroke-width="7" stroke-linecap="round"><path d="M0 820h330M800 830h800M40 790v60M140 790v60M240 795v55M880 800v60M1000 800v60M1120 800v60M1240 800v60M1360 800v60M1480 800v60"/></g>
+    <rect width="1600" height="900" fill="url(#st-vig)"/>
+  </svg>
+  <div class="board">
+    <div class="post"></div>
+    <h1>Egy lyuk a földben</h1>
+    <p class="sub">Zsáklak kertje · a pincék · a trollok barlangja</p>
+    <div class="rule"></div>
+    <div id="choices"></div>
+    <div class="rule small"></div>
+    <!-- Painted smaller at the board's foot (NOTES-21-screens); kept out of #choices, whose buttons are the game starts. -->
+    <div id="extras"></div>
+  </div>
+  <div class="keys">
+    <h3>Irányítás</h3>
+    <p><b>Billentyű és egér:</b> WASD járás, egér nézelődés, bal gomb vagy F ásás, jobb gomb vagy Q létra, Szóköz ugrás / mászás, Shift lefelé, E pult.</p>
+    <p><b>Kontroller:</b> bal kar járás, jobb kar nézelődés, RT ásás, LT vagy Y létra, A ugrás, LB lefelé, X pult, B vissza. 2. játékos: Start a másik kontrolleren · kiszállás: a Back gomb nyomva tartása.</p>
+    <p><b>2. játékos kontroller nélkül: F2</b> (még egyszer F2: kiszáll). Nyilak járás, I J K L nézelődés, U ásás, O létra, jobb Shift ugrás / mászás, jobb Ctrl lefelé, P pult (nyilak + Enter a menüben). F3: osztás váltása.</p>
+    <p><b>Szünet:</b> Esc vagy a kontroller Start (Menu) gombja, mindkét játékosnak közös. M: zene hangereje (100 / 60 / 30 % / ki); a hangerők és a nézelődés a Beállításokban. Saját zenék: <code>assets/music</code>, lásd az OLVASSEL-ZENE.txt-t.</p>
+  </div>
+</div>
+<!-- The pause, the settings and the credits are built here by src/ui/screens.js (NOTES-21-screens). -->
+<div id="screens"></div>
+<!-- The loading screen: a page of Bilbo's book with a pencil drawing of the place, filled by src/ui/loading.js. -->
+<div id="loading">
+  <div class="ld-page">
+    <div class="ld-draw"></div>
+    <div class="ld-text">
+      <h2 class="ld-place">Zsáklak</h2>
+      <p class="ld-q"></p>
+      <p class="ld-src"></p>
+    </div>
+  </div>
+  <div class="ld-status">
+    <div class="ld-bar"><i></i><span class="ld-pencil" aria-hidden="true"></span></div>
+    <p class="ld-msg">A játék betöltődik …</p>
+  </div>
+</div>
+<script type="module" src="src/ui/loading.js"></script>
+<script type="module" src="src/main.js"></script>
+<script>
+  // The offline cache only on the published site (https), never on the local dev server or the QA pages.
+  if ('serviceWorker' in navigator && location.protocol === 'https:') {
+    navigator.serviceWorker.register('sw.js').catch((e) => console.warn('service worker:', e));
+  }
+</script>
+</body>
+</html>

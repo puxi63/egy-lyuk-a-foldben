@@ -1,0 +1,48 @@
+SAJÁT ZENE A JÁTÉKHOZ (Egy lyuk a földben)
+==========================================
+
+Ebbe a mappába (assets/music) teheted a saját zenéidet. A játék magától megtalálja őket,
+nem kell semmit átállítani vagy újra összerakni. Elég a játékot újratölteni.
+
+Általános lista (ez szól mindenhol, ahol nincs külön zene)
+----------------------------------------------------------
+  zene-1.mp3, zene-2.mp3, zene-3.mp3 ... legfeljebb zene-100
+
+- A számozás 1-től induljon, és ne legyen benne lyuk: ha nincs zene-2, akkor a zene-3-at és
+  az utána következőket a játék már nem keresi.
+- Sorban szólnak, áttűnéssel, a végén elölről.
+
+Helyzethez kötött zenék (mind elhagyható)
+------------------------------------------
+  cim.mp3                       a címképernyőn és a karakterválasztásnál
+  felszin-1.mp3, felszin-2.mp3  a felszínen (Zsáklak, a kert, a Zöld Sárkány)
+  reteg-1-1.mp3, reteg-1-2.mp3  az 1. rétegben (Zsáklak kertje)
+  reteg-2-1.mp3 ...             a 2. rétegben (Hobbitüregek és pincék)
+  reteg-3-1.mp3 ...             a 3. rétegben (A trollok barlangja)
+  reteg-4-1.mp3 ...             a 4. rétegben (Goblinváros, Ködhegység)
+  reteg-5-1.mp3 ...             az 5. rétegben (Gollam tava)
+  reteg-6-1.mp3 ...             a 6. rétegben (Bakacsinerdő gyökerei, a Tünde-király csarnokai)
+  reteg-7-1.mp3 ...             a 7. rétegben (Tóváros alatt: a cölöperdő, a kikötő, az elsüllyedt óváros)
+  reteg-8-1.mp3 ...             a 8. rétegben (Erebor tárnái: a bányajáratok, a nagy csarnok, a kohók)
+  reteg-9-1.mp3 ...             a 9. rétegben (Szmaug kincstára), ha nincs szmaug.mp3
+  szmaug.mp3                    Szmaug kincstárában, lopakodás közben (ha nincs, a reteg-9-… vagy az
+                                általános lista szól). Szmaug közelében a zene magától halkabb lesz.
+  halal.mp3                     rövid zene, amikor meghalsz
+  menekules.mp3                 a finálé menekülésekor: Szmaug üldöz felfelé a gödörben (és amíg Bárd le nem lövi)
+  unnep.mp3                     a befejezés ünnepén a Zöld Sárkányban és a hazatérésnél
+  stablista.mp3                 a stáblista alatt (a címképernyő Stáblista pontja): ide való a törpék dala,
+                                ha van saját felvételed
+
+Ha egy helyzethez nincs külön zene, az általános lista szól. Rétegváltáskor a zene csak
+akkor vált, ha legalább 10 másodpercig az új rétegben vagy (nem vág bele minden méternél).
+Két játékosnál annak a rétegnek a zenéje szól, ahol a mélyebben járó játékos van.
+
+Elnevezés
+---------
+- Kisbetűvel, ékezet és szóköz nélkül: reteg-2-1.mp3 (nem Réteg 2-1.mp3).
+- Formátum: MP3 (ajánlott), OGG vagy M4A, ugyanazzal a névvel (pl. reteg-2-1.ogg).
+  Ha egy névhez több fájl van, az .mp3 az első, aztán az .ogg, aztán az .m4a.
+
+A játékban
+----------
+- M billentyű: a zene hangereje 100 % → 60 % → 30 % → ki. A beállítás megmarad.
