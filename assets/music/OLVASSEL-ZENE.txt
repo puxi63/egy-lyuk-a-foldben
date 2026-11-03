@@ -10,7 +10,12 @@ nem kell semmit átállítani vagy újra összerakni. Elég a játékot újratö
 
 - A számozás 1-től induljon, és ne legyen benne lyuk: ha nincs zene-2, akkor a zene-3-at és
   az utána következőket a játék már nem keresi.
-- Sorban szólnak, áttűnéssel, a végén elölről.
+- Áttűnéssel követik egymást. Alapból véletlen sorrendben szólnak: a játék megkeveri a listát,
+  mindegyik zene pontosan egyszer szól, és csak utána keveri meg újra (az új kör nem azzal kezdődik,
+  ami épp az imént szólt). Ha a Beállításokban kioltod a „Zene véletlen sorrendben” gyertyát,
+  sorban szólnak, a végén elölről.
+- Ugyanez érvényes a helyzethez kötött sorozatokra is (felszin-…, reteg-…): mindegyiknek saját
+  sorrendje van, és ha visszatérsz egy rétegbe, ott folytatódik, ahol abbahagyta.
 
 Helyzethez kötött zenék (mind elhagyható)
 ------------------------------------------
@@ -46,3 +51,11 @@ Elnevezés
 A játékban
 ----------
 - M billentyű: a zene hangereje 100 % → 60 % → 30 % → ki. A beállítás megmarad.
+- Z billentyű (angol billentyűzeten Y): ugrás a következő zenére. Kontrolleren: tartsd lenyomva az
+  LB gombot, és nyomd meg a View (Back) gombot. A Szünet menüben és a Beállításokban is ott van a
+  „Következő zeneszám” sor. Áttűnéssel vált, és a lejátszási sorrendet követi (véletlen sorrendnél
+  a megkevert sorrendet). Egy rövid felirat mutatja az új zene fájlnevét.
+  Amíg egy helyzet saját, egyetlen zenéje szól (cim, halal, szmaug, menekules, unnep, stablista),
+  addig nem lehet léptetni.
+- Beállítások → „Zene véletlen sorrendben”: égő gyertya = véletlen sorrend (ez az alapértelmezés),
+  kioltva = sorban. Ezt a gép jegyzi meg, a mentéstől külön.

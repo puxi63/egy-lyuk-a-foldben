@@ -82,14 +82,14 @@
 .pp-who p { margin: 0 0 0.4rem; }
 .pp-who small { font-family: var(--f-text); color: #5a4430; }
 .pp-keys { margin-top: auto; margin-bottom: 0; font-size: clamp(0.7rem, 0.95vw, 0.85rem); color: #6a5236; }
-.pitems { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.12rem; margin-top: 1%; } /* NOTES-25: seven items now, packed tighter */
-.pitems li { position: relative; display: flex; flex-direction: column; padding: 0.12rem 0.4rem 0.14rem 2rem; cursor: pointer; border-radius: 0.2rem; }
+.pitems { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.04rem; margin-top: 0; } /* NOTES-25 / NOTES-30: eight items now, packed tighter */
+.pitems li { position: relative; display: flex; flex-direction: column; padding: 0.06rem 0.4rem 0.08rem 2rem; cursor: pointer; border-radius: 0.2rem; line-height: 1.1; }
 .pitems li b { font-family: var(--f-head); font-weight: normal; font-size: clamp(1rem, 1.55vw, 1.45rem); color: #3a2410; line-height: 1.1; }
 .pitems li small { font-size: clamp(0.66rem, 0.85vw, 0.8rem); color: #7a5e3e; font-style: italic; }
 .pitems li.sel { background: linear-gradient(176deg, transparent 0 55%, #b8904a40 57% 80%, transparent 84%); }
 .pitems li.sel b { color: #7a1e10; }
 .pitems li.sel::before { content: '❧'; position: absolute; left: 0.3rem; top: 0.2rem; font-size: 1.3rem; color: #7a1e10; }
-.pp-msg { margin-top: auto; margin-bottom: 0; font-family: var(--f-chalk); font-size: 1.2rem; color: #4a2410; min-height: 1.4em; }
+.pp-msg { margin-top: auto; margin-bottom: 0; font-family: var(--f-chalk); font-size: clamp(0.85rem, 1.1vw, 1.2rem); line-height: 1.15; color: #4a2410; min-height: 1.2em; }
 @media (max-aspect-ratio: 4/3) {
   .pbook { right: 50%; transform: translate(50%, -50%); width: 92vw; }
 }
@@ -120,6 +120,23 @@
 .drow.lit .cd-flame, .drow.lit .cd-glow { opacity: 1; }
 .drow.lit .cd-smoke { opacity: 0; }
 .drow.lit .cd-flame { transform-box: fill-box; transform-origin: 50% 100%; animation: flick 0.5s ease-in-out infinite alternate; }
+/* NOTES-30-music: the skip row, a song-book page with a brass page-turn tab; the corner flips once when used. */
+.drow.is-action .dctl { height: 3.8rem; }
+.drow.is-action .pg-corner { transform-box: fill-box; transform-origin: 0% 100%; }
+.drow.is-action.turned .pg-corner { animation: pgturn 0.45s ease-out; }
+.drow.is-action.sel .pg-tab { filter: brightness(1.15); }
+@keyframes pgturn { 0% { transform: rotate(0deg) scale(1); } 50% { transform: rotate(-70deg) scale(1.6); } 100% { transform: rotate(0deg) scale(1); } }
+/* NOTES-30-music: seven rows now; on short windows (720p) the knobs and candles shrink so the sheet still fits. */
+@media (max-height: 56rem) {
+  .desk-sheet { padding-top: 1rem; padding-bottom: 1rem; }
+  .desk-rows { gap: 0.1rem; }
+  .drow { padding: 0.05rem 0.6rem; }
+  .dctl { width: 3.5rem; height: 3.5rem; }
+  .drow { grid-template-columns: 1fr 3.5rem; }
+  .drow.is-candle .dctl { height: 4.1rem; }
+  .drow.is-action .dctl { height: 3rem; }
+  .desk-keys { margin-top: 0.4rem; }
+}
 .desk-keys { margin: 0.8rem 0 0; font-size: 0.82rem; color: #6a5236; }
 .desk-back { position: absolute; right: 1.4rem; bottom: 1rem; font-family: var(--f-head); font-size: 1.1rem; color: #4a2410; background: none; border: 0; cursor: pointer; text-decoration: underline wavy #b8904a; }
 

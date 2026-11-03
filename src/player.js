@@ -480,8 +480,16 @@ export class Player {
       }
       if (!hits) break;
       tmpV.multiplyScalar(1 / Math.sqrt(hits));
-      this.pos.add(tmpV);
       tmpN.copy(tmpV).normalize();
+      if (tmpN.y > 0.7) {
+        // Walkable ground (under ~45°): out straight up, not along the slope's normal. The normal's sideways part let a
+        // standing player creep down every slope (the gold's dunes: 0.1–0.2 m in 2 s, more at low frame rates), also
+        // while a menu or a held scene froze his walking (NOTES-29-final).
+        this.pos.y += tmpV.length() / tmpN.y;
+        if (this.vel.y < 0) this.vel.y = 0;
+        continue;
+      }
+      this.pos.add(tmpV);
       const vn = this.vel.dot(tmpN);
       if (vn < 0) this.vel.addScaledVector(tmpN, -vn);
     }

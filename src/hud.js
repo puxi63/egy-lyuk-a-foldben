@@ -386,9 +386,17 @@ export class Hud {
     this.r.banner.innerHTML = `<div class="bn"><span class="ru">${toRunes(name)}</span><span class="hu">${name}</span></div>`;
     const k = this.r.knots[Math.max(0, layer - 1)];
     if (layer > 0 && k) {
-      k.classList.remove('glow');
-      void k.offsetWidth; // restart the animation (a rare event, not per frame)
-      k.classList.add('glow');
+      // No synchronous layout (it was `void k.offsetWidth` between remove and add; NOTES-29-final): the class goes when
+      // its animation ends, so the next glow starts by adding it; one still running is restarted.
+      if (k.classList.contains('glow')) {
+        for (const a of k.getAnimations()) {
+          a.cancel();
+          a.play();
+        }
+      } else {
+        k.addEventListener('animationend', () => k.classList.remove('glow'), { once: true });
+        k.classList.add('glow');
+      }
     }
   }
 }

@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { MAX_PLAYERS, SHOP } from './config.js';
 import { Finds } from './finds.js';
 import { Hud } from './hud.js';
-import { emptyIntent, Input } from './input.js';
+import { emptyIntent, Input, SKIP_KEY } from './input.js';
 import { FIND_TYPES } from './finds.js';
 import { preloadCharacters } from './characters.js';
 import { CHARACTERS, Player } from './player.js';
@@ -441,6 +441,16 @@ export class Game {
     location.reload();
   }
 
+  /**
+   * NOTES-30-music: the next music track (the skip key, a pad's LB + View, the pause and settings rows). A short line
+   * names the new file; ignored while a single situation track or the death sting plays. Returns the file name or null.
+   */
+  skipTrack() {
+    const name = this.music?.skip() ?? null;
+    if (name && !this.screens.busy) for (const p of this.players) p.say(`Következő zene: ${name}`);
+    return name;
+  }
+
   /** The music situation: the title, the surface, or the layer of the deepest player (TERV 0.10). */
   musicSituation() {
     if (this.players.every((p) => p.choosing)) return 'cim';
@@ -567,6 +577,10 @@ export class Game {
         const lv = this.music.cycleLevel();
         this.players[0].say(lv ? `Zene hangereje: ${Math.round(lv * 100)} %` : 'Zene kikapcsolva');
       }
+      // NOTES-30-music: the skip key (shared keyboard) or a player's pad chord; a plain loop, nothing allocated per frame.
+      let skip = this.input.pressed.has(SKIP_KEY);
+      for (let i = 0; !skip && i < this.intents.length; i++) skip = !!this.intents[i]?.skipTrackPressed;
+      if (skip) this.skipTrack();
     }
     // The spoil heap in the garden grows with the dug volume (recounted at most every 2 s, only after digging).
     this.spoilT = (this.spoilT || 0) + dt;
@@ -591,7 +605,11 @@ export class Game {
       if (!this.params.has('nopreupload')) this.preuploadScene();
     }
     const tRender = performance.now();
-    this.render();
+    // While the title screen (opaque, full window) covers the canvas, nothing drawn would be seen: skip the views. Most
+    // of the mesh load happens behind it, and its frames were bound by the main thread (NOTES-20, NOTES-29-final).
+    // (`?titledraw=1`: draw anyway, the A/B switch of qa/perf/loadtime.mjs --title.)
+    const st = this.bench || this.params.has('titledraw') ? null : (this.startEl ||= document.getElementById('start'));
+    if (!(this.screens.titleUp && st?.isConnected && !st.classList.contains('gone'))) this.render();
     // Bench: where the main-thread time of the slowest frame went (render includes the per-view culling).
     if (this.bench) {
       this.lastProf = {

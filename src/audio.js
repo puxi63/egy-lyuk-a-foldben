@@ -93,6 +93,34 @@ async function probeSeries(prefix, max = 100) {
   return out;
 }
 
+/** The situations with one own track (no series): skipping is ignored while one of them plays its own file. */
+const SINGLES = ['cim', 'halal', 'szmaug', 'menekules', 'unnep', 'stablista'];
+
+/** The stored shuffle choice (NOTES-30-music): on unless the player turned it off. */
+export function shuffleSetting() {
+  return readSettings().shuffle !== false;
+}
+
+/**
+ * Fisher-Yates over `order` in place (TODO 16: a shuffled play ORDER, not a random pick per track). When `avoid` is
+ * given and the list has more than one track, the round does not start with it (the track that just played): the
+ * first entry is swapped with a random other one, which keeps the first track uniform over the rest.
+ */
+export function shuffleOrder(order, rng = Math.random, avoid = -1) {
+  for (let i = order.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    const t = order[i];
+    order[i] = order[j];
+    order[j] = t;
+  }
+  if (avoid >= 0 && order.length > 1 && order[0] === avoid) {
+    const j = 1 + Math.floor(rng() * (order.length - 1));
+    order[0] = order[j];
+    order[j] = avoid;
+  }
+  return order;
+}
+
 export class Music {
   constructor() {
     this.lists = new Map(); // situation → Promise<urls[]>
@@ -120,13 +148,21 @@ export class Music {
       /* no settings */
     }
     this.started = false;
+    // NOTES-30-music: shuffle (one shuffled order per list key, kept so a layer continues its order), the RNG (QA
+    // injects a seeded one), whether the list now playing is a single situation track, the death sting in progress.
+    this.shuffle = shuffleSetting();
+    this.rng = Math.random;
+    this.orders = new Map(); // list key -> { order: number[], pos }
+    this.single = false;
+    this.stinging = 0;
+    this.track = null;
   }
 
   /** The tracks of a situation: 'cim', 'felszin', 'reteg-1' … (series), 'halal' (single); empty when none. */
   list(situation) {
     if (!this.lists.has(situation)) {
       // 'stablista': the credits (NOTES-21-screens), meant for the player's own recording of the dwarves' song.
-      const single = ['cim', 'halal', 'szmaug', 'menekules', 'unnep', 'stablista'].includes(situation);
+      const single = SINGLES.includes(situation);
       this.lists.set(situation, single ? probe(situation).then((u) => (u ? [u] : [])) : probeSeries(`${situation}-`));
     }
     return this.lists.get(situation);
@@ -161,22 +197,59 @@ export class Music {
   async switchTo(situation) {
     this.current = situation;
     let urls = await this.list(situation);
+    // The list key (NOTES-30-music): the list really played, so every situation falling back to the general list
+    // shares the general list's order, and 'szmaug' without its own file continues the reteg-9 order.
+    let key = situation;
+    const single = urls.length > 0 && SINGLES.includes(situation);
     // Smaug's treasury without its own szmaug.mp3: the layer's own series first (NOTES-7a-hoard).
-    if (!urls.length && situation === 'szmaug') urls = await this.list('reteg-9');
-    if (!urls.length) urls = await this.general;
+    if (!urls.length && situation === 'szmaug') {
+      urls = await this.list('reteg-9');
+      key = 'reteg-9';
+    }
+    if (!urls.length) {
+      urls = await this.general;
+      key = 'zene';
+    }
     if (this.current !== situation) return;
     // Two situations without their own music share the general list: keep it playing instead of restarting.
     if (urls === this.urls && !this.decks[this.active].paused) return;
-    this.playFrom(urls, situation);
+    this.single = single;
+    this.playFrom(urls, key);
+  }
+
+  /**
+   * The index of the next track of a list (NOTES-30-music). Shuffle off: in order, round and round (`this.index`).
+   * Shuffle on: the list's shuffled order, every track once, then a new order that does not start with the last one.
+   * Runs only when a track starts (never per frame).
+   */
+  nextIndex(urls, key) {
+    const n = urls.length;
+    if (!this.shuffle || n < 2) {
+      const i = ((this.index.get(key) ?? -1) + 1) % n;
+      this.index.set(key, i);
+      return i;
+    }
+    let o = this.orders.get(key);
+    if (!o || o.order.length !== n) {
+      // A new order: it does not start with the track of this list that plays right now (shuffle just turned on).
+      const playing = this.key === key && this.urls === urls ? urls.indexOf(this.track) : -1;
+      o = { order: shuffleOrder(Array.from({ length: n }, (_, i) => i), this.rng, playing), pos: 0 };
+      this.orders.set(key, o);
+    } else if (o.pos >= n) {
+      shuffleOrder(o.order, this.rng, o.order[n - 1]);
+      o.pos = 0;
+    }
+    const i = o.order[o.pos++];
+    this.index.set(key, i); // where the in-order mode continues if shuffle is turned off
+    return i;
   }
 
   playFrom(urls, key) {
     if (!urls.length) {
       this.active = 1 - this.active; // fade out whatever plays
-      return;
+      return null;
     }
-    const i = ((this.index.get(key) ?? -1) + 1) % urls.length;
-    this.index.set(key, i);
+    const i = this.nextIndex(urls, key);
     this.active = 1 - this.active;
     const d = this.decks[this.active];
     d.src = urls[i];
@@ -184,10 +257,40 @@ export class Music {
     d.play().catch(() => {});
     this.urls = urls;
     this.key = key;
+    this.track = urls[i];
+    return urls[i];
   }
 
   next() {
     if (this.urls) this.playFrom(this.urls, this.key);
+  }
+
+  /** True when a skip would change the track: a list of two or more plays, no single situation track, no sting. */
+  canSkip() {
+    return !!(this.started && this.urls && this.urls.length > 1 && !this.single && !this.stinging);
+  }
+
+  /**
+   * The skip key / button and the menus' row (NOTES-30-music): the next track of the current order, crossfaded like
+   * any track change. Returns the new track's file name, or null when skipping is ignored.
+   */
+  skip() {
+    if (!this.canSkip()) return null;
+    const url = this.playFrom(this.urls, this.key);
+    return url ? url.slice(url.lastIndexOf('/') + 1) : null;
+  }
+
+  /** The file name of the track now playing (null when none). */
+  trackName() {
+    return this.track && this.urls ? this.track.slice(this.track.lastIndexOf('/') + 1) : null;
+  }
+
+  /** The settings' shuffle candle: sets and stores it (per device). Turning it on starts fresh orders. */
+  setShuffle(on) {
+    this.shuffle = !!on;
+    writeSettings({ shuffle: this.shuffle });
+    if (this.shuffle) this.orders.clear();
+    return this.shuffle;
   }
 
   /** A one-shot sting (death) over the ducked music. */
@@ -197,12 +300,13 @@ export class Music {
     const a = new Audio(urls[0]);
     a.volume = this.level;
     this.duck = 0.25;
-    a.addEventListener('ended', () => {
+    this.stinging++; // NOTES-30-music: no skipping under the death sting
+    const done = () => {
       this.duck = 1;
-    });
-    a.play().catch(() => {
-      this.duck = 1;
-    });
+      this.stinging = Math.max(0, this.stinging - 1);
+    };
+    a.addEventListener('ended', done);
+    a.play().catch(done);
   }
 
   /** M key: steps the music volume down 100 % → 60 % → 30 % → off → 100 % (from any knob setting: the next step below it). */

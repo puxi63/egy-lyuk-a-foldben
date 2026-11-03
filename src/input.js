@@ -34,6 +34,9 @@ export function emptyIntent() {
     lampPressed: false,
     // NOTES-25-map-contract: the map screen (ui/map.js): B, the F2 player's Ú, a pad's left-stick click.
     mapPressed: false,
+    // NOTES-30-music: skip to the next music track on a pad (hold LB, press View / Back). The keyboard's key (KeyY: the
+    // key labelled Z on a Hungarian keyboard) is read once for the shared keyboard by game.js / ui/screens.js.
+    skipTrackPressed: false,
   };
 }
 
@@ -210,7 +213,11 @@ export class Input {
       it.ringPressed ||= edges[B.LEFT];
       it.tauntPressed ||= edges[B.RIGHT];
       // journal (NOTES-9-journal): a press of View / Back (holding it 2 s still makes player 2 leave, game.js).
-      it.journalPressed ||= edges[B.BACK];
+      // NOTES-30-music: with LB held, View / Back skips the music track instead (the chord leaves every single-button
+      // binding as it was; LB alone is the climb-down / sneak hold, which a short press of View does not disturb).
+      const skipChord = edges[B.BACK] && btn(B.LB);
+      it.skipTrackPressed ||= skipChord;
+      it.journalPressed ||= edges[B.BACK] && !skipChord;
       // safety/: the D-pad's free slot (down) is the rope (TERV 0.4 "Kötél/Lift"); in menus it still navigates.
       it.ropePressed ||= edges[B.DOWN];
       // screens (NOTES-21-screens): Start (Menu) pauses; it only joins for a pad that is not bound yet (game.js).
@@ -242,3 +249,5 @@ export class Input {
 }
 
 export const PAD_BUTTONS = B;
+/** NOTES-30-music: the keyboard's skip-track key (free in every binding; the key labelled Z on a Hungarian keyboard). */
+export const SKIP_KEY = 'KeyY';
