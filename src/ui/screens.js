@@ -21,6 +21,7 @@
 import { LAYER_NAMES, layerAtDepth } from '../materials.js';
 import { BagView, CollectionView } from './collection.js';
 import { CreditsView } from './credits.js';
+import { SKIP_KEY } from '../input.js';
 import { MapView } from './map.js';
 import { applySettings, SettingsView } from './settings.js';
 
@@ -81,6 +82,9 @@ const ROOM = `<svg class="room" viewBox="0 0 1600 900" preserveAspectRatio="xMid
   <rect width="1600" height="900" fill="url(#ps-vig)"/>
 </svg>`;
 
+/** The intent fields every screen reads (merged over all players). */
+const MERGED = ['upPressed', 'downPressed', 'leftPressed', 'rightPressed', 'confirmPressed', 'backPressed', 'pausePressed', 'mapPressed', 'skipTrackPressed'];
+
 /** The pause menu's items (ids are stable for QA). */
 const ITEMS = [
   { id: 'resume', label: 'Folytatás', note: 'vissza a gödörbe' },
@@ -90,6 +94,8 @@ const ITEMS = [
   { id: 'bag', label: 'Zsák', note: 'mi lapul benne' },
   { id: 'collection', label: 'Gyűjtemény', note: 'a mathom-szoba trófeái' },
   { id: 'settings', label: 'Beállítások', note: 'Bilbó íróasztala' },
+  // NOTES-30-music: the next music track (the note shows the key / button; the result goes to the page's message line).
+  { id: 'nexttrack', label: 'Következő zeneszám', note: 'Z billentyű · kontrolleren LB + View' },
   { id: 'title', label: 'Kilépés a címhez', note: '' },
 ];
 
@@ -191,7 +197,7 @@ export class Screens {
     const shared = g.bindings.some((x) => x.kbm === 'keys2');
     const it = {};
     const merge = (one) => {
-      for (const k of ['upPressed', 'downPressed', 'leftPressed', 'rightPressed', 'confirmPressed', 'backPressed', 'pausePressed', 'mapPressed']) it[k] ||= one[k];
+      for (const k of MERGED) it[k] ||= one[k];
     };
     // Every keyboard binding, and every connected pad (on the title a pad may not be bound to anyone yet).
     g.bindings.forEach((b) => b.kbm && merge(g.input.intent(b.kbm, null, shared)));
@@ -203,6 +209,8 @@ export class Screens {
       this.skip = Math.max(0, this.skip - 1);
       return true;
     }
+    // NOTES-30-music: the skip key / pad chord works on every screen too (the music carries on while frozen).
+    if (it.skipTrackPressed || g.input.pressed.has(SKIP_KEY)) this.skipTrack();
     if (this.view === 'pause') this.pauseInput(it);
     else if (this.view === 'settings') this.settings.input(it);
     else if (this.view === 'credits') this.credits.input(it);
@@ -275,6 +283,7 @@ export class Screens {
     const g = this.game;
     if (this.view !== 'pause' || this.leaving) return;
     if (id === 'resume') this.close();
+    else if (id === 'nexttrack') this.skipTrack();
     else if (id === 'settings') {
       this.pauseEl.classList.remove('on');
       this.view = 'settings';
@@ -304,6 +313,23 @@ export class Screens {
       if (g.modes?.versus) g.modes.versus.toTitle();
       else this.reload();
     }
+  }
+
+  /**
+   * NOTES-30-music: the next music track from a screen. The pause book's message line and the settings' row say what
+   * plays now, or why nothing changed.
+   */
+  skipTrack() {
+    const g = this.game;
+    const name = g.skipTrack();
+    const m = g.music;
+    const line = name ? `Most szól: ${name}`
+      : !m?.started ? 'A zene a játék indulásakor szólal meg.'
+        : !m.urls?.length ? 'Nincs saját zene az assets/music mappában.'
+          : 'Most egyetlen zene szól, nincs mire léptetni.';
+    if (this.view === 'pause') this.pauseEl.querySelector('.pp-msg').textContent = line;
+    if (this.view === 'settings') this.settings.refresh(name ? null : line);
+    return name;
   }
 
   /* ---------------- NOTES-25-map-contract: the map, the bag, the collection ---------------- */

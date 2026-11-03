@@ -409,20 +409,15 @@ export class Decor {
   /** Signed distance (m, positive inside) to the nearest solid set piece; −1 when none is near. */
   sdf(x, y, z) {
     const list = this.colliders;
-    const ys = this.colliderY;
-    // Binary search for the first collider whose centre is above y − maxBr.
-    let lo = 0;
-    let hi = ys.length;
-    const y0 = y - this.maxBr;
-    while (lo < hi) {
-      const mid = (lo + hi) >> 1;
-      if (ys[mid] < y0) lo = mid + 1;
-      else hi = mid;
-    }
+    // Height bands (NOTES-29-final): per 1 m band the colliders whose box reaches into it. The old search scanned every
+    // collider within ±maxBr (8 m since Erebor's big pieces): ~290 per call in Goblin-town, 2–3 ms a frame.
+    if (this.bandsFor !== this.colliderY) this.buildBands();
+    const b = Math.floor(y - this.bandY0);
+    if (b < 0 || b >= this.bands.length) return -1;
+    const idx = this.bands[b];
     let best = -1;
-    const y1 = y + this.maxBr;
-    for (let i = lo; i < list.length && ys[i] <= y1; i++) {
-      const c = list[i];
+    for (let k = 0; k < idx.length; k++) {
+      const c = list[idx[k]];
       if (!c.on) continue;
       const r = c.br + 0.05;
       if (Math.abs(x - c.x) > r || Math.abs(y - c.y) > r || Math.abs(z - c.z) > r) continue;
@@ -430,6 +425,33 @@ export class Decor {
       if (d > best) best = d;
     }
     return best;
+  }
+
+  /**
+   * Builds the height bands of `sdf()` from the collider list (again whenever `colliderY` is replaced, as hoard/neck.js
+   * does after adding its colliders). A collider's `y` is fixed; its `br` too, except Smaug's live neck capsules, whose
+   * `br` changes every frame up to `maxBr` (they are switched off above it), so they are filed with `maxBr`.
+   */
+  buildBands() {
+    const list = this.colliders;
+    const reach = (c) => (c.smaugNeck ? this.maxBr : c.br) + 0.05;
+    let y0 = Infinity;
+    let y1 = -Infinity;
+    for (const c of list) {
+      y0 = Math.min(y0, c.y - reach(c));
+      y1 = Math.max(y1, c.y + reach(c));
+    }
+    this.bandY0 = Math.floor(y0);
+    const n = Math.max(0, Math.ceil(y1) - this.bandY0 + 1);
+    const tmp = Array.from({ length: n }, () => []);
+    list.forEach((c, i) => {
+      const r = reach(c);
+      const b0 = Math.max(0, Math.floor(c.y - r - this.bandY0));
+      const b1 = Math.min(n - 1, Math.floor(c.y + r - this.bandY0));
+      for (let b = b0; b <= b1; b++) tmp[b].push(i);
+    });
+    this.bands = tmp.map((a) => Int32Array.from(a));
+    this.bandsFor = this.colliderY;
   }
 
   /**

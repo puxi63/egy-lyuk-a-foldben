@@ -6,9 +6,11 @@
  *   - Nézelődés sebessége: mouse, the F2 player's IJKL and the right stick (input.js lookScale, ×0.5 … ×2).
  *   - Fordított függőleges nézés: input.js invertY.
  *   - Osztott képernyő egymás mellett: the split direction (the F3 key toggles it too; game.split 'v' / 'h').
+ *   - Zene véletlen sorrendben: shuffle of the music lists (audio.js Music.setShuffle; NOTES-30-music).
+ *   - Következő zeneszám: an action row (a page of a song book turned by a brass tab): skips to the next track.
  * Controls: up / down choose a row, left / right turn a knob (or flip a candle), A / Enter / Space flip a candle,
  * B / Esc / Backspace go back. With the mouse: click a knob's left or right half, scroll over it, click a candle. ==== */
-import { effectsLevel, readSettings, setEffectsLevel, writeSettings } from '../audio.js';
+import { effectsLevel, readSettings, setEffectsLevel, shuffleSetting, writeSettings } from '../audio.js';
 
 /** Look speed: knob 0..1 → multiplier ×0.5 … ×2 (the default ×1 sits at one third). */
 const lookOf = (v) => 0.5 + 1.5 * v;
@@ -62,6 +64,17 @@ function candleSVG() {
   </svg>`;
 }
 
+/** NOTES-30-music: a page of Bilbo's song book with a brass page-turn tab; `.turned` flips the page's corner once. */
+function pageSVG() {
+  return `<svg viewBox="0 0 100 100" aria-hidden="true">
+    <path d="M14 18h60l12 12v54H14z" fill="#efe4c8" stroke="#8a6a3a" stroke-width="2"/>
+    <g stroke="#9a8460" stroke-width="1.4"><path d="M22 36h52M22 41h52M22 46h52M22 51h52M22 56h52"/></g>
+    <g fill="#3a2410"><ellipse cx="34" cy="51" rx="4.2" ry="3.2"/><ellipse cx="52" cy="46" rx="4.2" ry="3.2"/><path d="M37.6 51V31M55.6 46V27" stroke="#3a2410" stroke-width="1.8"/><path d="M37.6 31l18-4v4l-18 4z"/></g>
+    <g class="pg-corner"><path d="M74 18v12h12z" fill="#d8c8a0" stroke="#8a6a3a" stroke-width="2" stroke-linejoin="round"/></g>
+    <g class="pg-tab"><path d="M58 66h22l8 8-8 8H58z" fill="url(#kn-rim)" stroke="#4a3008" stroke-width="2"/><path d="M64 69l6 5-6 5zM71 69l6 5-6 5z" fill="#2a1806"/></g>
+  </svg>`;
+}
+
 /** Shared gradients for the knobs and candles (one copy in the screen). */
 const DEFS = `<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
   <radialGradient id="kn-rim" cx="40%" cy="35%" r="70%"><stop offset="0" stop-color="#f4d88a"/><stop offset=".55" stop-color="#c0902e"/><stop offset="1" stop-color="#6a4410"/></radialGradient>
@@ -103,6 +116,17 @@ export class SettingsView {
         },
         fmt: (v) => (v ? 'ég: bal és jobb fél (F3)' : 'nem ég: felső és alsó fél (F3)'),
       },
+      // NOTES-30-music: shuffle (per device) and the skip row.
+      {
+        id: 'shuffle', kind: 'candle', label: 'Zene véletlen sorrendben', get: () => game.music?.shuffle ?? shuffleSetting(),
+        set: (v) => (game.music ? game.music.setShuffle(v) : writeSettings({ shuffle: v })),
+        fmt: (v) => (v ? 'ég: megkeverve, mindegyik egyszer, aztán újrakeverve' : 'nem ég: sorban, a végén elölről'),
+      },
+      {
+        id: 'nexttrack', kind: 'action', label: 'Következő zeneszám', get: () => game.music?.trackName() || null,
+        set: () => game.screens?.skipTrack(),
+        fmt: (v) => (v ? `most szól: ${v} · Z / LB + View` : 'Z billentyű · kontrolleren LB + View'),
+      },
     ];
     el.className = 'scr scr-settings';
     el.innerHTML = `${DEFS}
@@ -115,10 +139,10 @@ export class SettingsView {
           <div class="desk-rows">${this.rows.map((r, i) => `
             <div class="drow is-${r.kind}" data-i="${i}">
               <div class="dlab"><b>${r.label}</b><small class="dval"></small></div>
-              <div class="dctl">${r.kind === 'knob' ? knobSVG() : candleSVG()}</div>
+              <div class="dctl">${r.kind === 'knob' ? knobSVG() : r.kind === 'action' ? pageSVG() : candleSVG()}</div>
             </div>`).join('')}
           </div>
-          <p class="desk-keys">Fel / le: sor · balra / jobbra: tekerés · A / Enter: gyertya · B / Esc: vissza</p>
+          <p class="desk-keys">Fel / le: sor · balra / jobbra: tekerés · A / Enter: gyertya, lapozás · B / Esc: vissza</p>
           <button class="desk-back" type="button">Vissza</button>
         </div>
       </div>`;
@@ -130,6 +154,7 @@ export class SettingsView {
         this.select(i);
         const r = this.rows[i];
         if (r.kind === 'candle') this.flip(i);
+        else if (r.kind === 'action') this.act(i);
         else {
           const box = ctl.getBoundingClientRect();
           this.turn(i, e.clientX < box.left + box.width / 2 ? -1 : 1);
@@ -163,6 +188,7 @@ export class SettingsView {
   /** One knob step: 10 % (look: 1/15 of the range). */
   turn(i, d) {
     const r = this.rows[i];
+    if (r.kind === 'action') return d > 0 ? this.act(i) : undefined;
     if (r.kind !== 'knob') return this.flip(i);
     const step = r.id === 'look' ? 1 / 15 : 0.1;
     const v = Math.round(Math.max(0, Math.min(1, r.get() + d * step)) * 1000) / 1000;
@@ -178,11 +204,23 @@ export class SettingsView {
     this.refresh();
   }
 
-  refresh() {
+  /** NOTES-30-music: an action row (the skip): Screens.skipTrack runs it and refreshes the row with the result. */
+  act(i) {
+    const r = this.rows[i];
+    if (r.kind !== 'action') return;
+    const re = this.rowEls[i];
+    re.classList.remove('turned');
+    void re.offsetWidth; // restart the page-turn animation
+    re.classList.add('turned');
+    r.set();
+  }
+
+  /** `note`: a line shown in the skip row instead of its value (why a skip changed nothing). */
+  refresh(note = null) {
     this.rows.forEach((r, i) => {
       const v = r.get();
       const re = this.rowEls[i];
-      re.querySelector('.dval').textContent = r.fmt(v);
+      re.querySelector('.dval').textContent = note && r.kind === 'action' ? note : r.fmt(v);
       if (r.kind === 'knob') re.style.setProperty('--a', `${(-135 + 270 * v).toFixed(1)}deg`);
       else re.classList.toggle('lit', !!v);
     });
@@ -197,5 +235,6 @@ export class SettingsView {
     if (it.leftPressed) this.turn(this.sel, -1);
     if (it.rightPressed) this.turn(this.sel, 1);
     if (it.confirmPressed && this.rows[this.sel].kind === 'candle') this.flip(this.sel);
+    if (it.confirmPressed && this.rows[this.sel].kind === 'action') this.act(this.sel);
   }
 }

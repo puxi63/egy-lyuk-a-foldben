@@ -57,7 +57,7 @@ export class CreditsView {
           <p class="cr-names">Kiskötő-Zsákosék · a Zöld Sárkány vendégei · a trollok, kőből · a goblinok · Bakacsinerdő pókjai · a tündék · Tóváros népe</p>
           <div class="cr-rule"></div>
           <h3>Készült</h3>
-          <p class="cr-names">a játék gazdájának terve alapján · programozta Claude (Anthropic)</p>
+          <p class="cr-names">Varga Tamás terve alapján · programozta Claude (Anthropic)</p>
           <p class="cr-names small">Megjelenítés: three.js · Betűk (SIL OFL): Uncial Antiqua, Almendra, EB Garamond, Caveat, Noto Sans Runic</p>
           <div class="cr-rule"></div>
           <p class="cr-end">Oda és vissza</p>

@@ -483,10 +483,15 @@ export class Journal {
         });
         hudIn.appendChild(el);
       }
-      el.classList.remove('on');
       el.innerHTML = html;
-      void el.offsetWidth; // restart the animations
-      el.classList.add('on');
+      // Restart without a synchronous layout (it was `void el.offsetWidth`; NOTES-29-final): a slip still showing has
+      // its running animations restarted, a hidden one (the end of ji-out removes `on`) simply starts.
+      if (el.classList.contains('on')) {
+        for (const a of el.getAnimations()) {
+          a.cancel();
+          a.play();
+        }
+      } else el.classList.add('on');
     });
   }
 
