@@ -382,16 +382,26 @@ export class Enemies {
   stampTunnel(p) {
     const o = new THREE.Vector3(p.pos.x, p.pos.y + 0.7, p.pos.z);
     const start = Math.random() * Math.PI * 2;
-    for (let k = 0; k < 8; k++) {
+    // A wall at least 1.6 m off first; in a narrow shaft (every wall nearer) the nearest acceptable one, so a raid night
+    // still finds the player who digs a body-wide shaft (it silently brought nobody there; NOTES-29-final).
+    for (let k = 0; k < 16; k++) {
       const a = start + (k / 8) * Math.PI * 2;
       const d = tmp.set(Math.sin(a), 0, Math.cos(a));
       const t = raycast(o, d, 9);
-      if (t < 1.6) continue;
+      if (t < (k < 8 ? 1.6 : 0.3)) continue;
       const wall = tmp2.copy(o).addScaledVector(d, t);
       for (let s = 0; s < 5; s++) digSphere(wall.x + d.x * (s * 0.8 - 0.3), wall.y + 0.1, wall.z + d.z * (s * 0.8 - 0.3), 0.85);
       const inner = wall.clone().addScaledVector(d, 2.6);
       if (sdf(inner.x, inner.y, inner.z) > -0.2) continue; // the block's wall would not give way
       return { x: wall.x, y: p.pos.y, z: wall.z, nx: -d.x, nz: -d.z };
+    }
+    // No wall within reach in any direction (a big open cave): they come out of the dark across its floor, 7 m off.
+    for (let k = 0; k < 8; k++) {
+      const a = start + (k / 8) * Math.PI * 2;
+      const d = tmp.set(Math.sin(a), 0, Math.cos(a));
+      if (raycast(o, d, 9) >= 0) continue;
+      const f = floorBelow(o.x + d.x * 7, o.y + 0.5, o.z + d.z * 7, 4);
+      if (f) return { x: f.x, y: f.y, z: f.z, nx: -d.x, nz: -d.z };
     }
     return null;
   }

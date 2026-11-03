@@ -81,9 +81,11 @@ function fireMaterial(uTime, uAmt) {
         return mix(mix(h(i), h(i + vec2(1, 0)), f.x), mix(h(i + vec2(0, 1)), h(i + vec2(1, 1)), f.x), f.y); }
       void main() {
         float along = 1.0 - vUv.y;
+        // Beyond the flame's reach the pixel adds exactly nothing: skip the noise and the blend (NOTES-29-final).
+        float reach = smoothstep(uAmt * 1.05, uAmt * 1.05 - 0.25, along);
+        if (reach <= 0.0) discard;
         float rim = abs(dot(vN, vV));
         float fl = n2(vec2(vUv.x * 9.0, along * 6.0 - uTime * 9.0)) * 0.6 + n2(vec2(vUv.x * 21.0, along * 14.0 - uTime * 17.0)) * 0.4;
-        float reach = smoothstep(uAmt * 1.05, uAmt * 1.05 - 0.25, along);
         float a = rim * (0.55 + 0.6 * fl) * reach * (1.0 - smoothstep(0.75, 1.0, along) * 0.6);
         vec3 core = vec3(1.0, 0.92, 0.6);
         vec3 mid = vec3(1.0, 0.45, 0.08);

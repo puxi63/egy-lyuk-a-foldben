@@ -921,6 +921,11 @@ export class Finale {
       p.say(LINES.freePlay, 6);
     }
     this.forceMusic(null);
+    // TERV 0.6 "a végén külön trófea": finishing in Kihívás mode puts Bilbo's Red Book into the mathom room (the user's
+    // choice, 2026-11-03; the book Bilbo starts writing after the quest, from The Lord of the Rings). [ellenőrizendő]
+    if (this.game.enemies?.challenge && this.game.bagEnd?.addTrophy({ id: 'piros-konyv', color: 0xa02a24 })) {
+      for (const p of this.active()) p.say('Kihívás teljesítve! Bilbó Piros Könyve a mathom-szoba vitrinjébe került.', 6);
+    }
     this.game.saveNow?.();
   }
 
