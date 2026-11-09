@@ -154,7 +154,7 @@ const PARCH = 'radial-gradient(ellipse at 50% 45%, #0000 55%, #6a4a2240 100%), v
 
 const CSS = `
 .journal { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(92cqw, 47em); max-height: 96cqh;
-  display: none; z-index: 9; pointer-events: none; padding: 0.62em 0 0.95em; color: var(--ink-dark); font-family: var(--f-text); font-size: 0.92em; line-height: 1.22; }
+  display: none; z-index: 9; pointer-events: none; padding: 0.62em 0 calc(var(--roll, 1.2em) / 2 + 0.1em); color: var(--ink-dark); font-family: var(--f-text); font-size: 0.92em; line-height: 1.22; }
 .journal.on { display: block; }
 /* the rollers: the top one carries the scroll; the bottom one holds what is still rolled up (--roll: its thickness) */
 .jn-rod { position: absolute; left: -0.35em; right: -0.35em; z-index: 2; height: 0.95em; border-radius: 0.45em; background: ${ROD}; box-shadow: 0 0.18em 0.4em #000b; }
@@ -165,7 +165,7 @@ const CSS = `
 .jn-rod.bot { top: calc(100% - var(--roll, 1.2em)); height: var(--roll, 1.2em); border-radius: calc(var(--roll, 1.2em) / 2);
   background: linear-gradient(#5a3a16, #c8ae7a 18%, #f2e4c0 46%, #d8c08e 70%, #5a3a16); }
 .jn-rod.bot::before, .jn-rod.bot::after { height: calc(var(--roll, 1.2em) + 0.5em); }
-.jn-sheet { position: relative; max-height: calc(96cqh - 1.6em); overflow: hidden; padding: 0.95em 1.35em 0.6em; background: ${PARCH};
+.jn-sheet { position: relative; display: flex; flex-direction: column; max-height: calc(96cqh - 0.75em - var(--roll, 1.2em) / 2); overflow: hidden; padding: 0.95em 1.35em calc(var(--roll, 1.2em) / 2 + 0.45em); background: ${PARCH};
   box-shadow: 0 0.4em 1.6em #000d, inset 0 0 3em #7a5a2a66; border-left: 1px solid #8a6a3a66; border-right: 1px solid #8a6a3a66; }
 .jn-sheet::before { content: ''; position: absolute; inset: 0.55em 0.42em; border: 1px solid #5a3a1a99; pointer-events: none;
   box-shadow: inset 0 0 0 0.16em #0000, inset 0 0 0 calc(0.16em + 1px) #5a3a1a55; }
@@ -189,8 +189,36 @@ const CSS = `
 .jn-rule { height: 0; border-top: 1px solid #5a3a1a66; margin: 0.25em 8% 0.4em; position: relative; }
 .jn-rule::after { content: '᛫᛫᛫'; position: absolute; left: 50%; top: -0.62em; transform: translateX(-50%); padding: 0 0.4em; font-family: var(--f-rune); font-size: 0.8em;
   color: #8a2414; background: #dcc79a; border-radius: 0.3em; }
+/* NOTES-31 (queue item 18): the sheet is a column whose body gives way, so the footer (progress, keys) always stays on
+   the parchment above the bottom roller; short viewports (720p, small windows, the halves of a split screen) compact
+   the page so that the body fits too: one line per clause, no rune line or legend, the small print on one line. */
+.jn-in { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+.jn-in > * { flex: none; }
+.jn-in > .jn-body { flex: 0 1 auto; min-height: 0; overflow: hidden; }
 .jn-body { display: grid; grid-template-columns: 1fr; gap: 0.35em 1.4em; }
-@container hud (min-aspect-ratio: 5 / 4) { .jn-body { grid-template-columns: 1.2fr 1fr; } }
+@container hud (min-aspect-ratio: 5 / 4) { .jn-body { grid-template-columns: 1.55fr 1fr; } }
+@container hud (max-height: 820px) {
+  .jn-sheet { padding-top: 0.75em; padding-left: 1.2em; padding-right: 1.2em; }
+  .jn-row .jn-l { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .jn-leg { display: none; }
+  .jn-fine { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 0.25em; }
+  .jn-pre { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+}
+@container hud (max-height: 640px) {
+  .journal { font-size: 0.86em; }
+  .jn-ru { display: none; }
+  .jn-nm { font-size: 1.3em; }
+  .jn-title { margin: 0 0 0.15em; }
+  .jn-rule { margin: 0.15em 8% 0.3em; }
+  .jn-row { padding: 0; line-height: 1.18; }
+  .jn-types { line-height: 1.15; }
+}
+@container hud (max-height: 420px) {
+  .journal { font-size: 0.95em; padding-top: 0.5em; }
+  .jn-top .jn-par, .jn-pre { display: none; }
+  .jn-st { font-size: 0.82em; }
+  .jn-foot { margin-top: 0.2em; }
+}
 .jn-h { font-family: var(--f-head); font-size: 0.98em; color: #5a2a0a; margin: 0 0 0.2em; border-bottom: 1px dotted #5a3a1a77; }
 .jn-row { display: flex; align-items: baseline; gap: 0.4em; padding: 0.05em 0; }
 .jn-no { flex: none; min-width: 2.1em; font-family: var(--f-head); font-size: 0.82em; color: #8a2414; white-space: nowrap; }
@@ -209,7 +237,7 @@ const CSS = `
 .jn-cnt b { font-family: var(--f-head); font-weight: normal; font-size: 1.12em; color: #3a1a08; white-space: nowrap; }
 .jn-bar { flex: 1; height: 0.38em; border: 1px solid #5a3a1a99; border-radius: 0.2em; overflow: hidden; background: #fff3; }
 .jn-bar i { display: block; height: 100%; background: linear-gradient(#c89a3a, #8a5a1a); }
-.jn-types { columns: 2; column-gap: 1em; font-size: 0.84em; line-height: 1.25; }
+.jn-types { columns: 12em 2; column-gap: 1em; font-size: 0.84em; line-height: 1.25; }
 .jn-types div { break-inside: avoid; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .jn-types em { font-style: normal; color: #7a5a2a; font-size: 0.92em; }
 .jn-types .g { color: #8a5a10; }
@@ -281,6 +309,12 @@ export class Journal {
      * hoard/talk.js: 'szmaug', 'szmaug-ketely'; ui/map.js: 'holdbetuk' the moon letters read).
      */
     this.marks = new Set();
+    /**
+     * NOTES-31-handbook: the find kinds that have been in a player's bag (polled with the state, at most once a second),
+     * so the handbook keeps describing a find after it was sold. Saved as the optional `seen` list of this journal's
+     * save object; a save without it starts empty (the handbook also derives finds from the rest of the save).
+     */
+    this.seen = new Set();
     this.ui = new Map(); // player → { root, box, inner, open, page, html }
     this.t = POLL_CLOSED; // poll at the first update
     this.view = null; // the last gathered values (refresh())
@@ -300,11 +334,23 @@ export class Journal {
   }
 
   state() {
-    return this.marks.size ? { marks: [...this.marks] } : undefined;
+    if (!this.marks.size && !this.seen.size) return undefined;
+    const out = { marks: [...this.marks] };
+    if (this.seen.size) out.seen = [...this.seen]; // NOTES-31-handbook (optional field)
+    return out;
   }
 
   restore(s) {
     for (const m of s?.marks || []) this.marks.add(m);
+    for (const id of s?.seen || []) if (typeof id === 'string') this.seen.add(id);
+  }
+
+  /** NOTES-31-handbook: records the find kinds now in the players' bags (a few dozen ids, once per poll). */
+  noteSeen() {
+    for (const p of this.game.players) {
+      if (p.choosing) continue;
+      for (const f of p.bag || []) if (f?.id && !this.seen.has(f.id)) this.seen.add(f.id);
+    }
   }
 
   /** A module reports an event it does not save itself (the cell escape, the barrel ride, the moon letters). */
@@ -359,6 +405,7 @@ export class Journal {
 
   /** Gathers every value shown; returns true when anything changed since the last call. */
   refresh() {
+    this.noteSeen();
     const s = this.gather();
     let ticks = 0;
     let clauses = 0;

@@ -21,6 +21,7 @@
 import { LAYER_NAMES, layerAtDepth } from '../materials.js';
 import { BagView, CollectionView } from './collection.js';
 import { CreditsView } from './credits.js';
+import { HandbookView } from './handbook.js';
 import { SKIP_KEY } from '../input.js';
 import { MapView } from './map.js';
 import { applySettings, SettingsView } from './settings.js';
@@ -93,6 +94,8 @@ const ITEMS = [
   { id: 'journal', label: 'Szerződés', note: 'Bilbó végtelen szerződéstekercse' },
   { id: 'bag', label: 'Zsák', note: 'mi lapul benne' },
   { id: 'collection', label: 'Gyűjtemény', note: 'a mathom-szoba trófeái' },
+  // NOTES-31-handbook: Bilbo's handbook, the searchable guide.
+  { id: 'handbook', label: 'Kézikönyv', note: 'Bilbó jegyzetei: mi mire való' },
   { id: 'settings', label: 'Beállítások', note: 'Bilbó íróasztala' },
   // NOTES-30-music: the next music track (the note shows the key / button; the result goes to the page's message line).
   { id: 'nexttrack', label: 'Következő zeneszám', note: 'Z billentyű · kontrolleren LB + View' },
@@ -103,7 +106,7 @@ export class Screens {
   constructor(game) {
     this.game = game;
     this.enabled = !game.bench;
-    this.view = null; // 'pause' | 'settings' | 'credits' | 'map' | 'bag' | 'collection' | null
+    this.view = null; // 'pause' | 'settings' | 'credits' | 'map' | 'bag' | 'collection' | 'handbook' | null
     this.subBack = null; // NOTES-25: where the map / bag / collection return ('pause', or null: back to the game)
     this.titleUp = true; // main.js clears it when the title's choice starts the game
     this.menuWas = []; // per player: was a menu holding him after the last frame
@@ -163,6 +166,7 @@ export class Screens {
     this.map = new MapView(game, mk());
     this.bag = new BagView(game, mk());
     this.collection = new CollectionView(game, mk());
+    this.handbook = new HandbookView(game, mk()); // NOTES-31-handbook: empty until opened
     // Losing the pointer lock in free play (the browser's Esc, another window) pauses too.
     this.hadLock = false;
     document.addEventListener('pointerlockchange', () => {
@@ -217,6 +221,7 @@ export class Screens {
     else if (this.view === 'map') this.map.input(it);
     else if (this.view === 'bag') this.bag.input(it);
     else if (this.view === 'collection') this.collection.input(it);
+    else if (this.view === 'handbook') this.handbook.input(it);
     return true;
   }
 
@@ -298,7 +303,7 @@ export class Screens {
       const p = g.players[this.opener];
       this.close();
       if (p && !p.choosing) g.journal.open(p, p.depth > 0.5 ? layerAtDepth(p.depth) : 0);
-    } else if (id === 'map' || id === 'bag' || id === 'collection') {
+    } else if (id === 'map' || id === 'bag' || id === 'collection' || id === 'handbook') {
       this.openSub(id, this.opener, 'pause'); // NOTES-25-map-contract
     } else if (id === 'title') {
       this.leaving = true;
@@ -356,6 +361,7 @@ export class Screens {
     const done = () => this.closeSub();
     if (id === 'map') this.map.show({ ...opts, opener: who }, done);
     else if (id === 'bag') this.bag.show(who, done);
+    else if (id === 'handbook') this.handbook.show(who, done, !!this.game.bindings[who]?.kbm); // NOTES-31-handbook
     else this.collection.show(done);
   }
 
@@ -363,6 +369,7 @@ export class Screens {
     this.map.hide();
     this.bag.hide();
     this.collection.hide();
+    this.handbook.hide();
     if (this.subBack === 'pause') {
       this.view = 'pause';
       this.skip = 1;
@@ -377,6 +384,7 @@ export class Screens {
     this.map?.hide();
     this.bag?.hide();
     this.collection?.hide();
+    this.handbook?.hide();
     if (this.view === 'credits') {
       this.view = null;
       this.credits.finish();
