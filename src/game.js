@@ -1,6 +1,6 @@
 /* ==== game.js — renderer, players, split screen, the frame loop and the bench mode ==== */
 import * as THREE from 'three';
-import { MAX_PLAYERS, SHOP } from './config.js';
+import { LADDER_LEN, MAX_PLAYERS, SHOP } from './config.js';
 import { Finds } from './finds.js';
 import { Hud } from './hud.js';
 import { emptyIntent, Input, SKIP_KEY } from './input.js';
@@ -249,7 +249,9 @@ export class Game {
     // the find positions and the dug terrain (save.js migration, finds.js migrateTakenV2; NOTES-2a).
     if (s.takenV2) this.finds.hideTaken(this.finds.migrateTakenV2(s.takenV2, changedNear));
     else this.finds.hideTaken(s.taken || []);
-    for (const [x, y, z, yaw] of s.ladders || []) this.ladders.add({ x, y, z }, { x: Math.sin(yaw), z: Math.cos(yaw) });
+    // The optional 5th entry is a capped ladder's length (NOTES-32-ladder-coop); without it the full LADDER_LEN, so ladders
+    // placed before the height cap load unchanged (also those above it).
+    for (const [x, y, z, yaw, len] of s.ladders || []) this.ladders.add({ x, y, z }, { x: Math.sin(yaw), z: Math.cos(yaw) }, len ?? LADDER_LEN);
     const byId = new Map(FIND_TYPES.map((f) => [f.id, f]));
     for (const sack of s.sacks || []) this.sacks.drop(sack.p[0], sack.p[1] - 0.25, sack.p[2], sack.items.map((id) => byId.get(id)).filter(Boolean));
   }

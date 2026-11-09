@@ -6,13 +6,14 @@ import { LADDER_LEN, MAX_LADDERS } from './config.js';
 import { buildBagEnd } from './surface/bagend.js';
 import { flushPlants } from './surface/flora.js';
 import { buildGarden, buildSpoilHeap } from './surface/garden.js';
-import { groundGeometry, LAKE, laneGeometry, scatterTufts, scatterWildflowers, waterDist } from './surface/ground.js';
+import { groundGeometry, groundHeight, LAKE, laneGeometry, scatterTufts, scatterWildflowers, waterDist } from './surface/ground.js';
 import { buildInn } from './surface/inn.js';
 import { Batch, model } from './surface/kit.js';
 import { buildLife } from './surface/life.js';
 import { SURFACE_TIME, surfaceMats } from './surface/mats.js';
 import { buildShire } from './surface/shire.js';
 import { buildSky, buildSmoke } from './surface/sky.js';
+import { surfaceHeight } from './world-gen.js';
 
 /** Where the counter of the Zöld Sárkány stands (the shop opens within 3.2 m), and where players respawn. */
 export const SHOP_POS = new THREE.Vector3(5.5, 0, 16.5);
@@ -141,7 +142,28 @@ export function pushOutOfSurface(pos, r = 0.25) {
   return moved;
 }
 
-/** Ladders: shared by all players, instanced (two rails and rungs, 4 m each). */
+/**
+ * The ladders' height cap (TODO item 19, NOTES-32-ladder-coop): a placed ladder's top may stand at most `cap` m above the
+ * outdoor ground surface at its spot (the generated garden surface plus the meadow's height; never a cave ceiling), so
+ * stacking ladders no longer climbs into the sky. A full 4 m ladder that would stick out further is placed cut down to
+ * the cap (drawn shorter), when at least `min` m of it is left; else the player's placement is refused. Underground
+ * (top more than `cap` below the surface) nothing changes. `short`: below this length a ladder is not made at all
+ * (a restored old ladder that lies wholly above the cap is dropped).
+ */
+export const LADDER_CAP = { cap: 1.0, min: 1.5, short: 0.3 };
+
+/** The highest a placed ladder's top may reach at (x, z) (world y). */
+export function ladderTopCap(x, z) {
+  return surfaceHeight(x, z) + groundHeight(x, z) + LADDER_CAP.cap;
+}
+
+const ladderM = new THREE.Matrix4();
+const ladderQ = new THREE.Quaternion();
+const ladderP = new THREE.Vector3();
+const ladderS = new THREE.Vector3();
+const UP = new THREE.Vector3(0, 1, 0);
+
+/** Ladders: shared by all players, instanced (two rails and rungs, 4 m each; a capped one is drawn shorter). */
 export class Ladders {
   constructor(scene) {
     const parts = [];
@@ -164,18 +186,32 @@ export class Ladders {
     this.fixed = [];
   }
 
-  /** Adds a fixed, climbable ladder segment { x, y, z, yaw } (foot at y, LADDER_LEN tall; drawn elsewhere). */
+  /** Adds a fixed, climbable ladder segment { x, y, z, yaw } (foot at y, LADDER_LEN tall; drawn elsewhere; no cap). */
   addFixed(l) {
-    this.fixed.push({ x: l.x, y: l.y, z: l.z, yaw: l.yaw, fixed: true });
+    this.fixed.push({ x: l.x, y: l.y, z: l.z, yaw: l.yaw, len: LADDER_LEN, top: l.y + LADDER_LEN, fixed: true });
   }
 
-  /** Places a ladder with its foot at `p`, leaning on a wall with outward normal `n` (horizontal). */
-  add(p, n) {
+  /** How long a ladder with its foot at (x, y, z) may be under the height cap (LADDER_LEN at most; ≤ 0: none). */
+  lenAt(x, y, z) {
+    return Math.min(LADDER_LEN, ladderTopCap(x, z) - y);
+  }
+
+  /**
+   * Places a ladder with its foot at `p`, leaning on a wall with outward normal `n` (horizontal). A new ladder (`len`
+   * omitted) is cut down to the height cap; false when the list is full or less than LADDER_CAP.short of it would be
+   * left under the cap. A restored one passes its saved `len` (a save from before the cap has none: LADDER_LEN), so
+   * ladders placed before the cap keep their full height (the cap applies to new placements only).
+   */
+  add(p, n, len = null) {
     if (this.list.length >= MAX_LADDERS) return false;
+    if (len == null) {
+      len = this.lenAt(p.x, p.y, p.z);
+      if (len < LADDER_CAP.short) return false;
+    } else len = Math.max(LADDER_CAP.short, Math.min(LADDER_LEN, len));
     const yaw = Math.atan2(n.x, n.z);
-    this.list.push({ x: p.x, y: p.y, z: p.z, yaw });
-    const m = new THREE.Matrix4().compose(new THREE.Vector3(p.x, p.y, p.z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw), new THREE.Vector3(1, 1, 1));
-    this.mesh.setMatrixAt(this.list.length - 1, m);
+    this.list.push({ x: p.x, y: p.y, z: p.z, yaw, len, top: p.y + len });
+    ladderM.compose(ladderP.set(p.x, p.y, p.z), ladderQ.setFromAxisAngle(UP, yaw), ladderS.set(1, len / LADDER_LEN, 1));
+    this.mesh.setMatrixAt(this.list.length - 1, ladderM);
     this.mesh.count = this.list.length;
     this.mesh.instanceMatrix.needsUpdate = true;
     return true;
@@ -183,26 +219,26 @@ export class Ladders {
 
   /** Removes the placed ladders whose span comes within `r` of (x, y, z) (modes/: a Kihívás cave-in buries them). */
   removeNear(x, y, z, r) {
-    const keep = this.list.filter((l) => Math.hypot(l.x - x, l.z - z) > r || y < l.y - r || y > l.y + LADDER_LEN + r);
+    const keep = this.list.filter((l) => Math.hypot(l.x - x, l.z - z) > r || y < l.y - r || y > l.top + r);
     const removed = this.list.length - keep.length;
     if (!removed) return 0;
     this.list = [];
     this.mesh.count = 0;
-    for (const l of keep) this.add(l, { x: Math.sin(l.yaw), z: Math.cos(l.yaw) });
+    for (const l of keep) this.add(l, { x: Math.sin(l.yaw), z: Math.cos(l.yaw) }, l.len);
     return removed;
   }
 
-  /** The ladder a body at (x, y, z) can hold on to, or null. */
+  /** The ladder a body at (x, y, z) can hold on to, or null (up to 0.2 m over its top: no climbing past the cap). */
   near(x, y, z) {
     for (const l of this.list) {
       const dx = x - l.x;
       const dz = z - l.z;
-      if (dx * dx + dz * dz < 0.55 * 0.55 && y > l.y - 0.6 && y < l.y + LADDER_LEN + 0.2) return l;
+      if (dx * dx + dz * dz < 0.55 * 0.55 && y > l.y - 0.6 && y < l.top + 0.2) return l;
     }
     for (const l of this.fixed) {
       const dx = x - l.x;
       const dz = z - l.z;
-      if (dx * dx + dz * dz < 0.55 * 0.55 && y > l.y - 0.6 && y < l.y + LADDER_LEN + 0.2) return l;
+      if (dx * dx + dz * dz < 0.55 * 0.55 && y > l.y - 0.6 && y < l.top + 0.2) return l;
     }
     return null;
   }

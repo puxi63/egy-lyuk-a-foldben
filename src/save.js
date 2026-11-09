@@ -1,5 +1,5 @@
 /* ==== save.js — the save (localStorage, versioned): money, players, finds, ladders, dropped bags and the dug terrain ==== */
-import { CELL, NX, NY, NZ, ORIGIN } from './config.js';
+import { CELL, LADDER_LEN, NX, NY, NZ, ORIGIN } from './config.js';
 import { density, digStats } from './world.js';
 
 export const SAVE_KEY = 'egy-lyuk-save-v1';
@@ -310,7 +310,8 @@ export function snapshot(game) {
     sold: game.sold,
     slots: game.slotData(),
     taken: game.finds.items.map((it, i) => (it.taken ? i : -1)).filter((i) => i >= 0),
-    ladders: game.ladders.list.map((l) => [+l.x.toFixed(2), +l.y.toFixed(2), +l.z.toFixed(2), +l.yaw.toFixed(3)]),
+    // A capped ladder (NOTES-32-ladder-coop) adds its length as an optional 5th entry; a full one is saved as before.
+    ladders: game.ladders.list.map((l) => { const a = [+l.x.toFixed(2), +l.y.toFixed(2), +l.z.toFixed(2), +l.yaw.toFixed(3)]; if (l.len < LADDER_LEN - 1e-3) a.push(+l.len.toFixed(3)); return a; }),
     coop: game.decor?.coop.state(),
     lift: game.lift?.state(),
     tutorial: game.tutorial?.state(),

@@ -2,7 +2,7 @@
    The game's own files are cached on install (PRECACHE, filled in by tools/build-upload.mjs); three.js and the fonts
    come from their CDNs and are cached on first use, so after one online visit the game also starts offline.
    A new upload changes VERSION, which drops the old cache. */
-const VERSION = '202611031336';
+const VERSION = '202611090944';
 const PRECACHE = [
   "./",
   "index.html",
@@ -135,6 +135,7 @@ const PRECACHE = [
   "src/ui/counter.js",
   "src/ui/credits.js",
   "src/ui/glyphs.js",
+  "src/ui/handbook.js",
   "src/ui/journal.js",
   "src/ui/loading.js",
   "src/ui/map.js",

@@ -8,8 +8,9 @@ import { cavityAt, nearSite } from './underground/sites.js';
 
 const clamp8 = (v) => (v > 127 ? 127 : v < -127 ? -127 : Math.round(v));
 
-/** Surface height of the garden inside the block: gentle bumps that fade to 0 at the block's edge. */
-function surfaceHeight(x, z) {
+/** Surface height of the garden inside the block: gentle bumps that fade to 0 at the block's edge (0 outside it). Also
+ * read by props.js (the ladders' height cap, NOTES-32-ladder-coop). */
+export function surfaceHeight(x, z) {
   const edge = Math.min(x - ORIGIN.x, -ORIGIN.x - x, z - ORIGIN.z, -ORIGIN.z - z);
   const fadeIn = Math.max(0, Math.min(1, (edge - 1) / 3));
   return (noise2(x * 0.15, z * 0.15) - 0.5) * 0.7 * fadeIn;

@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { BAG_TIERS, HUNGER, LADDER_LEN, ORIGIN, PLAYER, TOOL_TIERS } from './config.js';
 import { materialAt, MATS } from './materials.js';
 import { digSphere, normalAt, raycast, sdf } from './world.js';
-import { pushOutOfSurface, SPAWN_POS } from './props.js';
+import { LADDER_CAP, pushOutOfSurface, SPAWN_POS } from './props.js';
 import { CharacterBody, viewForearm } from './characters.js';
 import { armourAsset, armourOf } from './enemies/armour.js';
 import { waterStep } from './underground/lake-water.js';
@@ -40,6 +40,14 @@ const tmpN = new THREE.Vector3();
 const DIRS = [];
 for (let x = -1; x <= 1; x++) for (let y = -1; y <= 1; y++) for (let z = -1; z <= 1; z++) if (x || y || z) DIRS.push(new THREE.Vector3(x, y, z).normalize());
 const tmpV = new THREE.Vector3();
+
+/**
+ * Co-op pass-through (TODO item 20, NOTES-32-ladder-coop): the players have no collision with each other (no body is a
+ * solid for the other's collide(), the dig ray reads the soil alone), so they walk through each other. While a view's
+ * eye is inside a partner's body (closer than `r` m to his axis, between his feet and head), that body is not drawn in
+ * this view, so walking through him does not fill the screen with the inside of his model.
+ */
+const SEE_THROUGH = { r: 0.45, below: 0.2, above: 0.25 };
 
 /**
  * The body the other players see: the character's baked, skinned model (characters.js). userData: `bag` (scaled by how
@@ -351,7 +359,16 @@ export class Player {
       const up = (mz > 0.3 || it.jumpHeld ? 1 : 0) - (mz < -0.3 || it.climbDown ? 1 : 0);
       this.vel.set(wx * 0.6, up * PLAYER.climb * this.perk.climb, wz * 0.6);
       if (up > 0) this.addHunger(-HUNGER.perClimbSecond * dt);
-      if (this.pos.y > ladder.y + LADDER_LEN - 0.1 && up > 0) this.vel.y = PLAYER.jump * 0.6;
+      // At the top (a capped ladder's top too, NOTES-32-ladder-coop): stepping forward hops off it; climbing up alone
+      // stops there (no hop into the air and fall back), unless another ladder continues above.
+      if (this.pos.y > ladder.top - 0.1 && up > 0) {
+        if (mz > 0.3) this.vel.y = PLAYER.jump * 0.6;
+        else {
+          const next = this.game.ladders.near(ladder.x, ladder.top + 0.3, ladder.z);
+          if (next && next !== ladder) this.vel.y = PLAYER.jump * 0.6;
+          else this.vel.y = 0;
+        }
+      }
     } else {
       // After a shove the push carries (weak steering); Bombur's charge runs straight ahead (enemies/combat.js).
       this.knockT = Math.max(0, (this.knockT || 0) - dt);
@@ -560,11 +577,16 @@ export class Player {
       this.say('Nincs nálad létra. A pultnál vehetsz.');
       return;
     }
-    // On a ladder near its top: the next one continues it.
-    const on = this.game.ladders.near(this.pos.x, this.pos.y, this.pos.z);
-    if (on && this.pos.y > on.y + LADDER_LEN - 1.6) {
+    const L = this.game.ladders;
+    // On a ladder near its top: the next one continues it (only up to the height cap, NOTES-32-ladder-coop).
+    const on = L.near(this.pos.x, this.pos.y, this.pos.z);
+    if (on && this.pos.y > on.top - 1.6) {
+      if (on.top < on.y + LADDER_LEN - 0.01 || L.lenAt(on.x, on.top, on.z) < LADDER_CAP.min) {
+        this.sayTooHigh();
+        return;
+      }
       const n = new THREE.Vector3(Math.sin(on.yaw), 0, Math.cos(on.yaw));
-      if (this.game.ladders.add(new THREE.Vector3(on.x, on.y + LADDER_LEN, on.z), n)) this.ladders--;
+      if (L.add(new THREE.Vector3(on.x, on.top, on.z), n)) this.ladders--;
       return;
     }
     if (on) {
@@ -586,7 +608,40 @@ export class Player {
     tmpN.normalize();
     const foot = wall.addScaledVector(tmpN, 0.18);
     foot.y = this.pos.y;
-    if (this.game.ladders.add(foot, tmpN)) this.ladders--;
+    // Too near the surface: the ladder would stick out of the ground (a capped one needs LADDER_CAP.min m left).
+    if (L.lenAt(foot.x, foot.y, foot.z) < LADDER_CAP.min) {
+      this.sayTooHigh();
+      return;
+    }
+    if (L.add(foot, tmpN)) this.ladders--;
+  }
+
+  /** The refused ladder (the height cap, NOTES-32-ladder-coop): nothing is placed or used up. */
+  sayTooHigh() {
+    this.say('Itt a létra kilógna a földből: legfeljebb egy kicsit állhat ki a felszín fölé.', 3);
+  }
+
+  /**
+   * Co-op pass-through (NOTES-32-ladder-coop): hides a partner's body from this view while the eye is inside it, shows
+   * it again once apart (camera layers 1 + slot, see seeOthers). No allocation; a layer bit flips only on a change.
+   */
+  seeThrough() {
+    const ps = this.game.players;
+    if (ps.length < 2) return;
+    const ey = this.camera.position.y;
+    const r2 = SEE_THROUGH.r * SEE_THROUGH.r;
+    for (let i = 0; i < ps.length; i++) {
+      const o = ps[i];
+      if (o === this) continue;
+      const dx = o.pos.x - this.pos.x;
+      const dz = o.pos.z - this.pos.z;
+      const inside = dx * dx + dz * dz < r2 && ey > o.pos.y - SEE_THROUGH.below && ey < o.pos.y + (o.ch?.height || 1.2) + SEE_THROUGH.above;
+      const layer = 1 + o.slot;
+      if (inside === this.camera.layers.isEnabled(layer)) {
+        if (inside) this.camera.layers.disable(layer);
+        else this.camera.layers.enable(layer);
+      }
+    }
   }
 
   die(reason) {
@@ -618,6 +673,7 @@ export class Player {
     const downK = this.dead > 0 ? 0 : Math.min(1, (this.downT || 0) / 0.45);
     const eyeY = this.dead > 0 ? 0.25 : this.eyeH - downK * (this.eyeH - 0.45);
     this.camera.position.set(this.pos.x, this.pos.y + eyeY, this.pos.z);
+    this.seeThrough(); // co-op pass-through (NOTES-32-ladder-coop)
     this.kick = Math.max(0, (this.kick || 0) - dt * 7);
     const kick = this.kick * this.kick * 0.035;
     this.camera.quaternion.setFromEuler(new THREE.Euler(this.pitch - kick, this.yaw, (this.dead > 0 ? 0.6 : 0) + downK * 0.35 + kick * 0.4, 'YXZ'));
