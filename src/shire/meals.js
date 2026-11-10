@@ -12,6 +12,8 @@
  * - Snacks: from the middle of a window with no meal yet (plate under FULL), the hobbit eats one snack from his bag
  *   (SNACKS: a garden tomato, the neighbour's apple pie, a raw mushroom) and that counts as on time — so a deep trip
  *   can keep the rhythm. Potatoes are not snacks (the Bag End kitchen cooks them).
+ * - NOTES-35-lift-doors-bag: any BAG_FOOD (the snacks and a raw potato) can be eaten by hand from the bag screen
+ *   (eatFromBag); inside a meal window that is the meal.
  * - The HUD reads `p.mealClock` ({ idx, now, turn, mood }) and `p.mealK` (player.js walk multiplier). */
 import { MEALS } from '../ui/art.js';
 
@@ -29,6 +31,13 @@ export const MEAL = {
 
 /** Snacks eaten from the bag at meal time: find id → plate. */
 export const SNACKS = { paradicsom: 8, almaspite: 15, gomba: 5 };
+
+/**
+ * NOTES-35-lift-doors-bag: food a player can eat from the bag by hand (the bag screen's "Megeszem"): find id → plate.
+ * The snacks as they are, plus the raw potato, a small fill (the kitchen's cooked potato gives 9 or more, bagend/effects.js
+ * COOKABLE, so cooking stays the better use).
+ */
+export const BAG_FOOD = { ...SNACKS, krumpli: 4 };
 
 /** The window index at game hour h, or −1 at night. */
 export function windowAt(h) {
@@ -131,6 +140,29 @@ export class Meals {
       return true;
     }
     return false;
+  }
+
+  /**
+   * NOTES-35-lift-doors-bag: p eats one `id` from his bag by hand (the bag screen). The plate rises by BAG_FOOD[id];
+   * inside a meal window it counts as that meal (as an on-time snack does). Returns { ok, text }: the line to show.
+   */
+  eatFromBag(p, id) {
+    const fill = BAG_FOOD[id];
+    const k = fill ? p.bag.findIndex((f) => f && f.id === id) : -1;
+    if (k < 0) return { ok: false, text: 'Ez nem ehető.' };
+    if (p.dead > 0 || p.choosing) return { ok: false, text: 'Most nem tudsz enni.' };
+    const max = this.game.bagEnd?.effects?.hungerMax ?? 100;
+    if (p.hunger >= max - 0.5) return { ok: false, text: 'Tele a tányér: most egy falat sem fér beléd.' };
+    const f = p.bag[k];
+    p.bag.splice(k, 1);
+    p.hunger = Math.min(max, p.hunger + fill);
+    // The frame's rise is this meal: the plate watcher must not count it a second time.
+    this.prev.set(p, { h: p.hunger, dead: false });
+    p.say(`Megetted: ${f.name} (+${fill} a tányérra).`, 3);
+    // Inside a meal window: that meal is eaten (ate() adds its own "jóllakott" line).
+    const w = this.now();
+    if (w.key >= 0) this.ate(p, w);
+    return { ok: true, text: `Megetted: ${f.name} (+${fill} a tányérra).` };
   }
 
   /** Judges the window `key` that just ended, for every player. */
