@@ -1,12 +1,15 @@
 /* ==== underground/coop.js — the paired treasure chambers that only two players together can open (TERV 0.5 "Csak
    co-opban", Decision 17). With one player they stay shut.
    - Layer 2, the two-lever dwarf door: a stone door in the cellar corridor, a lever at each end of the corridor (about
-     9 m apart); both levers pulled within 0.8 s of each other slide the door into the wall.
+     9 m apart); both levers pulled within PULL_WINDOW (1.5 s) of each other slide the door into the wall.
    - Layer 3, the rune door with two keys: two rune stones far apart in the troll cave. With a player at each stone,
      stone A shows the order of four runes; stone B lights its runes one after another, and its player presses the
      interact action when the next rune of the order is lit (the players have to talk). Four right → the door opens.
    Behind each door a small treasure niche: a chest of coins and silver in the cellar, the trolls' pots of gold in the
-   troll cave (The Hobbit: the company buried the trolls' gold and dug it up on the way home). ==== */
+   troll cave (The Hobbit: the company buried the trolls' gold and dug it up on the way home).
+   NOTES-35-lift-doors-bag: the levers and stones are active only round their own floors (NEAR2 / NEAR3, from the set
+   pieces' real heights; the old prototype band, y −30…−42, never reached the corridor at −66.5 m after the layers moved
+   down, so the levers did nothing). promptFor(p) gives the HUD (hud.js) a prompt line at each lever and stone. ==== */
 import * as THREE from 'three';
 import { box, colorize, cyl, lathe, rgb, sphere } from './kit.js';
 import { floorAt } from './pieces.js';
@@ -24,7 +27,14 @@ export const RUNE_STONES = [
 
 /** The levers: corridor-local x of each lever, on the end walls, 1.05 m up. */
 const LEVER_X = [-(CORRIDOR.w / 2 - 0.3), CORRIDOR.w / 2 - 0.3];
-const PULL_WINDOW = 0.8;
+/** Seconds within which both levers must be pulled (NOTES-35: was 0.8 s, too tight for two people). */
+const PULL_WINDOW = 1.5;
+/** A lever can be pulled again this soon (a re-pull refreshes its time in the window). */
+const LEVER_REPULL = 0.5;
+/** World y bands in which the layer-2 levers and the layer-3 rune stones are live (feet height of a player). */
+const NEAR2 = [CORRIDOR.y - 4, CORRIDOR.y + 4];
+const NEAR3 = [TROLL_FLOOR - 4, TROLL_FLOOR + 6];
+const inBand = (y, b) => y > b[0] && y < b[1];
 
 /** Generic angular runes (stroke lists on a 0..1 cell; decoration, no inscription). */
 const GLYPHS = [
@@ -307,28 +317,26 @@ export class Coop {
         this.placeDoor(d);
       }
     }
-    const near2 = players.some((p) => p.pos.y < -30 && p.pos.y > -42);
-    const near3 = players.some((p) => p.pos.y < -48);
+    const near2 = players.some((p) => inBand(p.pos.y, NEAR2));
+    const near3 = players.some((p) => inBand(p.pos.y, NEAR3));
     // ---- levers ----
     if (near2) {
       players.forEach((p, i) => {
-        if (!intents?.[i]?.interactPressed) return;
-        for (const lv of this.levers) {
-          if (Math.hypot(p.pos.x - lv.x, p.pos.z - lv.z) > 1.6 || Math.abs(p.pos.y + 1 - lv.y) > 1.4) continue;
-          if (lv.t < 1.4) continue;
-          lv.t = 0;
-          lv.at = now;
-          const other = this.levers.find((o) => o !== lv);
-          if (this.doors.torpeajto.opening) return;
-          if (other.at && now - other.at < PULL_WINDOW) this.open('torpeajto', players);
-          else if (players.length < 2) this.say(p, 'lever1', 'Kattan, de visszaugrik. Ehhez az ajtóhoz két ember kell: a másik kart egyszerre kell meghúzni.');
-          else this.say(p, 'lever2', 'Kattan, de visszaugrik… A másik karral egyszerre kell!', 3);
-        }
+        if (!intents?.[i]?.interactPressed || p.dead > 0) return;
+        const lv = this.leverAt(p);
+        if (!lv || lv.t < LEVER_REPULL) return;
+        lv.t = 0;
+        lv.at = now;
+        const other = this.levers.find((o) => o !== lv);
+        if (this.doors.torpeajto.opening) return;
+        if (other.at && now - other.at < PULL_WINDOW) this.open('torpeajto', players);
+        else if (players.length < 2) this.say(p, 'lever1', 'Kattan, de visszaugrik. Ehhez az ajtóhoz két játékos kell (csak co-opban nyílik): a társad húzza meg a másik kart veled egyszerre. Második játékos: F2, vagy egy kontroller Start gombja.', 5);
+        else this.say(p, 'lever2', `Lehúztad a kart! A társad most húzza meg a másikat, ${PULL_WINDOW.toLocaleString('hu-HU')} másodpercen belül.`, 2);
       });
       for (const lv of this.levers) {
         lv.t += dt;
-        // Down in 0.25 s, held while the door opens (or 0.8 s), back up in 0.6 s.
-        const held = this.doors.torpeajto.opening ? 1 : lv.t < 0.25 ? lv.t / 0.25 : lv.t < 0.8 ? 1 : Math.max(0, 1 - (lv.t - 0.8) / 0.6);
+        // Down in 0.25 s, held while the door opens (or for the pull window), back up in 0.6 s.
+        const held = this.doors.torpeajto.opening ? 1 : lv.t < 0.25 ? lv.t / 0.25 : lv.t < PULL_WINDOW ? 1 : Math.max(0, 1 - (lv.t - PULL_WINDOW) / 0.6);
         lv.mesh.rotation.z = lv.side * held * 1.6;
       }
     }
@@ -336,15 +344,57 @@ export class Coop {
     if (near3) this.updateRunes(dt, players, intents);
   }
 
+  /** The lever p stands at (within reach of its handle), or null. */
+  leverAt(p) {
+    for (const lv of this.levers) {
+      if (Math.hypot(p.pos.x - lv.x, p.pos.z - lv.z) > 1.6 || Math.abs(p.pos.y + 1 - lv.y) > 1.4) continue;
+      return lv;
+    }
+    return null;
+  }
+
+  /** The rune stone index (0 = A, 1 = B) p stands in front of, or −1. */
+  stoneAt(p) {
+    return this.panels.findIndex((pn) => Math.hypot(p.pos.x - pn.front[0], p.pos.z - pn.front[1]) < 1.3 && Math.abs(p.pos.y - pn.y) < 1.5);
+  }
+
+  /**
+   * NOTES-35-lift-doors-bag: the HUD prompt at a lever or a rune stone for p: { text, key } (key: show the use key's
+   * glyph after the text), or null. A few comparisons; only round the two floors.
+   */
+  promptFor(p, players) {
+    if (p.dead > 0 || p.choosing) return null;
+    const solo = (players?.length || 1) < 2;
+    if (inBand(p.pos.y, NEAR2) && !this.doors.torpeajto.opening) {
+      const lv = this.leverAt(p);
+      if (!lv) return null;
+      if (solo) return { text: 'Törpeajtó karja · két játékos kell hozzá', key: true };
+      const other = this.levers.find((o) => o !== lv);
+      const now = performance.now() / 1000;
+      if (lv.at && now - lv.at < PULL_WINDOW) return { text: 'Lehúzva! Most a társad húzza meg a másik kart', key: false };
+      if (other.at && now - other.at < PULL_WINDOW) return { text: 'A társad lehúzta a karját: húzd meg most!', key: true };
+      return { text: 'Kar: húzzátok meg egyszerre a két kart', key: true };
+    }
+    if (inBand(p.pos.y, NEAR3) && !this.doors.runaajto.opening) {
+      const k = this.stoneAt(p);
+      if (k < 0) return null;
+      if (solo) return { text: 'Rúnakő · két játékos kell hozzá, egy-egy mindkét kőnél', key: false };
+      if (!this.rune.active) return { text: 'Rúnakő: a társad álljon a másik kő elé', key: false };
+      if (k === 0) return { text: 'Rúnakő: mondd el a társadnak, milyen sorrendben gyúltak ki itt a rúnák', key: false };
+      return { text: `Rúnakő: nyomd meg, amikor a sorrend következő rúnája világít (${this.rune.progress} / 4)`, key: true };
+    }
+    return null;
+  }
+
   updateRunes(dt, players, intents) {
     const r = this.rune;
     const door = this.doors.runaajto;
-    const at = this.panels.map((pn) => players.findIndex((p) => Math.hypot(p.pos.x - pn.front[0], p.pos.z - pn.front[1]) < 1.3 && Math.abs(p.pos.y - pn.y) < 1.5));
+    const at = [0, 1].map((k) => players.findIndex((p) => this.stoneAt(p) === k));
     const both = at[0] >= 0 && at[1] >= 0 && at[0] !== at[1];
     if (!door.opening) {
       if (!both) {
         for (let k = 0; k < 2; k++) {
-          if (at[k] >= 0) this.say(players[at[k]], 'rune1', players.length < 2 ? 'A rúnakő halványan dereng. Ehhez két ember kell: valakinek a másik kőnél is állnia kell.' : 'A rúnakő halványan dereng. A társadnak a másik kőnél kell állnia!');
+          if (at[k] >= 0) this.say(players[at[k]], 'rune1', players.length < 2 ? 'A rúnakő halványan dereng. Ehhez az ajtóhoz két játékos kell (csak co-opban nyílik): egyikőtök az egyik, másikotok a másik kő elé álljon. Második játékos: F2, vagy egy kontroller Start gombja.' : 'A rúnakő halványan dereng. A társadnak a másik kő elé kell állnia!');
         }
         if (r.active) {
           r.active = false;
@@ -355,7 +405,7 @@ export class Coop {
           r.active = true;
           r.cursor = 0;
           r.cursorT = 0;
-          for (const k of [0, 1]) this.say(players[at[k]], 'rune2', k === 0 ? 'A kövön rúnák gyúlnak ki: mondd el a társadnak a sorrendjüket!' : 'A rúnák sorban felvillannak: akkor nyomd meg, amikor a soron következő ég!', 4);
+          for (const k of [0, 1]) this.say(players[at[k]], 'rune2', k === 0 ? 'A kövön négy rúna gyúlt ki: mondd el a társadnak balról jobbra a sorrendjüket!' : 'A kövön a rúnák egyenként felvillannak: a társad megmondja a sorrendet, és te akkor nyomd meg a használat gombot, amikor a soron következő rúna világít!', 4);
         }
         r.cursorT += dt;
         if (r.cursorT > 1.1) {

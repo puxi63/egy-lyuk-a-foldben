@@ -29,7 +29,7 @@ import { TROLL } from '../trolls/index.js';
 import { BALIN } from '../safety/index.js';
 import { GARDEN } from '../shire/index.js';
 import { isMathom, MATHOM_IDS, REP, TRADE } from '../shire/mathoms.js';
-import { MEAL, MEAL_WINDOWS, SNACKS } from '../shire/meals.js';
+import { BAG_FOOD, MEAL, MEAL_WINDOWS, SNACKS } from '../shire/meals.js';
 import { SLOTS } from '../bagend/furniture.js';
 import { ROOM } from '../bagend/plan.js';
 import { WINE_ID } from '../bagend/effects.js';
@@ -182,7 +182,8 @@ function findLines(f) {
     lines.push(f.embedded ? `A falban csillog, messziről látni (${how} a rétegében).` : `Ásás közben bukkan elő a földből (${how} a rétegében).`);
   } else if (f.embedded && (f.famous || f.keep)) lines.push('Egyetlen darab van belőle, egy különleges helyen.');
   if (isMathom(f)) lines.push('<b>Mathom:</b> a szomszéd hobbit elcseréli, és Bilbó születésnapján ajándékba adhatod. Mindkettő hírnevet hoz.');
-  if (SNACKS[f.id]) lines.push(`<b>Étel:</b> étkezéskor a zsákodból is megeszed (+${SNACKS[f.id]} a tányérra).`);
+  // NOTES-35-lift-doors-bag: every bag food can be eaten by hand from the bag screen.
+  if (BAG_FOOD[f.id]) lines.push(`<b>Étel:</b> a zsákodból bármikor megeheted (szünet → Zsák, válaszd ki, „Megeszem”: +${BAG_FOOD[f.id]} a tányérra)${SNACKS[f.id] ? '; étkezéskor a hobbit magától is elővesz egyet' : ''}.`);
   if (COOK_IDS.includes(f.id)) lines.push('Zsáklak konyhájában (tűzhely) megfőzheted: jóllakat.');
   if (f.id === WINE_ID) lines.push('Zsáklak pincéjében a borospolcon érlelve egyre többet ér.');
   if (GEM_IDS.includes(f.id)) lines.push('<b>Drágakő:</b> a rétege legértékesebb leletei közé tartozik.');
@@ -212,11 +213,12 @@ function findEntries(add, S) {
     body: p('Mathom minden, aminek egy hobbit nem veszi hasznát, de kidobni sem dobná ki. A szomszéd hobbit elcseréli a legolcsóbb mathomodat almás pitére, Hosszúvölgyi levélre vagy egy másik mathomra'
       + ` (naponta ${TRADE.perDay} csere, mindegyik +${TRADE.rep} hírnév). Bilbó születésnapján ajándékba adhatod őket: mindegyik +${REP.gift} hírnév.`) + listFound(MATHOM_IDS, S),
   }));
-  const foods = [...COOK_IDS, ...Object.keys(SNACKS).filter((id) => !COOK_IDS.includes(id))];
+  const foods = [...COOK_IDS, ...Object.keys(BAG_FOOD).filter((id) => !COOK_IDS.includes(id))];
   add(C, 'Általában', has(foods), () => ({
     title: 'Étel a zsákban',
     meta: 'harapnivaló, főzés',
-    body: p('Néhány lelet ehető: étkezéskor a hobbit magától megeszik egyet a zsákjából, és ez időben evésnek számít (A Megye élete: a hét étkezés). A krumplit és a gombát Zsáklak konyhája meg is főzi.') + listFound(foods, S),
+    body: p('Néhány lelet ehető. <b>A zsákodból bármikor megeheted:</b> szünet (Esc / Start) → Zsák, fel / le kiválasztod az ételt, és A / Enter / Szóköz vagy a „Megeszem” gomb. A tányér telik, és ha épp egy étkezés ideje van, az időben evésnek számít (A Megye élete: a hét étkezés).')
+      + p('Ha egy étkezés feléig nem ettél, a hobbit magától is elővesz egy harapnivalót. A nyers krumpli keveset ér: Zsáklak konyhája a krumplit és a gombát megfőzi, főzve sokkal laktatóbb.') + listFound(foods, S),
   }));
   const famous = FIND_TYPES.filter((f) => f.famous).map((f) => f.id);
   add(C, 'Általában', has(famous), () => ({
@@ -372,7 +374,7 @@ function shireEntries(add, S) {
   add(C, 'Az étkezések', true, () => ({
     title: 'Harapnivaló a zsákból',
     meta: 'mélyen is időben enni',
-    body: p('Ha egy étkezés feléig nem ettél, a hobbit magától megeszik egy harapnivalót a zsákjából, és ez időben evésnek számít.')
+    body: p(`Ha egy étkezés feléig nem ettél, a hobbit magától megeszik egy harapnivalót a zsákjából, és ez időben evésnek számít. Kézzel is ehetsz a zsákból (szünet → Zsák → „Megeszem”), a nyers krumplit is (+${BAG_FOOD.krumpli}).`)
       + ul(Object.entries(SNACKS).map(([id, n]) => {
         const f = FIND_TYPES.find((x) => x.id === id);
         return S.found.has(id) && f ? `${f.name}: +${n} a tányérra` : LOCKED;
@@ -472,7 +474,7 @@ function controlEntries(add) {
     title: 'Képernyők és menük',
     meta: 'szünet, térkép, szerződés',
     body: table([
-      ['Esc / Start', 'szünet (a kézikönyv, a zsák, a gyűjtemény és a beállítások innen)'], ['B', 'Thrór térképe'], ['J vagy Tab', 'a szerződés tekercse'],
+      ['Esc / Start', 'szünet (a kézikönyv, a zsák, a gyűjtemény és a beállítások innen; a zsákban ételt is ehetsz)'], ['B', 'Thrór térképe'], ['J vagy Tab', 'a szerződés tekercse'],
       ['F2', 'második billentyűzetes játékos'], ['F3', 'osztott képernyő: egymás mellett / egymás alatt'], ['M', 'zene halkítása'],
     ]) + p('A menükben a nyilakkal (WASD-vel, D-paddal) lépsz, Enterrel, Szóközzel vagy A-val választasz, Esc-kel vagy B-vel lépsz vissza.'),
   }));

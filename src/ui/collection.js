@@ -5,10 +5,14 @@
  *   - Gyűjtemény: Bilbo's book listing the trophies of Bag End's mathom room (bagEnd.trophies: the famous finds and the
  *     pieces bagEnd.addTrophy receives), found ones written in ink with their layer, missing ones as an empty line.
  * Both are shown by ui/screens.js from the pause (shared screen, the game frozen), for the player who paused; left /
- * right switches to the other player's bag. Built on show (one innerHTML), emptied on hide: no cost while closed. ==== */
-import { BAG_TIERS } from '../config.js';
+ * right switches to the other player's bag. Built on show (one innerHTML), emptied on hide: no cost while closed.
+ * NOTES-35-lift-doors-bag: the bag lists its food first (shire/meals.js BAG_FOOD); up / down selects a row and
+ * confirm (A / Enter / Space) or the "Megeszem" button eats the selected food (Meals.eatFromBag: the plate rises, and
+ * inside a meal window it is that meal). Confirm on a row that is not food goes back, as before. ==== */
+import { BAG_TIERS, HUNGER } from '../config.js';
 import { FIND_TYPES } from '../finds.js';
 import { LAYER_NAMES } from '../materials.js';
+import { BAG_FOOD } from '../shire/meals.js';
 import { hex } from './art.js';
 
 /** The trophies the mathom room can receive (bagEnd.addTrophy callers), in the order of the layers. */
@@ -77,11 +81,15 @@ export class BagView {
     this.el = el;
     el.className = 'scr scr-bag';
     this.who = 0;
+    this.sel = 0;
+    this.note = '';
   }
 
   show(who, onBack) {
     this.who = who;
     this.onBack = onBack;
+    this.sel = 0;
+    this.note = '';
     this.render();
     this.el.classList.add('on');
   }
@@ -91,14 +99,65 @@ export class BagView {
     this.el.innerHTML = '';
   }
 
+  /** The shown bag's rows: [{ f, n, food }] (food first, the most filling first; then by value). */
+  groups() {
+    const p = this.game.players[this.who];
+    const groups = new Map();
+    for (const f of p?.bag || []) {
+      const e = groups.get(f.id) || { f, n: 0, food: BAG_FOOD[f.id] || 0 };
+      e.n++;
+      groups.set(f.id, e);
+    }
+    return [...groups.values()].sort((a, b) => (b.food ? 1 : 0) - (a.food ? 1 : 0) || b.food - a.food || b.f.value - a.f.value);
+  }
+
   input(it) {
-    if (it.backPressed || it.pausePressed || it.confirmPressed) return this.onBack?.();
+    if (it.backPressed || it.pausePressed) return this.onBack?.();
+    const rows = this.groups();
+    if (it.confirmPressed) {
+      if (rows[this.sel]?.food) return this.eat();
+      return this.onBack?.();
+    }
     const n = this.game.players.length;
-    const step = (it.rightPressed || it.downPressed ? 1 : 0) - (it.leftPressed || it.upPressed ? 1 : 0);
+    const side = (it.rightPressed ? 1 : 0) - (it.leftPressed ? 1 : 0);
+    const vert = (it.downPressed ? 1 : 0) - (it.upPressed ? 1 : 0);
+    // Up / down select a row; with an empty bag they switch bags, as left / right always do.
+    const step = side || (rows.length ? 0 : vert);
     if (step && n > 1) {
       this.who = (this.who + step + n) % n;
+      this.sel = 0;
+      this.note = '';
+      this.render();
+    } else if (vert && rows.length) {
+      this.sel = (this.sel + vert + rows.length) % rows.length;
       this.render();
     }
+  }
+
+  /** Eats the selected food from the shown bag (shire/meals.js eatFromBag); the result goes to the card's note line. */
+  eat() {
+    const g = this.game;
+    const p = g.players[this.who];
+    const row = this.groups()[this.sel];
+    if (!p || !row?.food) return;
+    const meals = g.shire?.meals;
+    let res;
+    if (meals) res = meals.eatFromBag(p, row.f.id);
+    else {
+      // No Shire module (a test page): the plate alone.
+      const max = g.bagEnd?.effects?.hungerMax ?? HUNGER.max;
+      const k = p.bag.findIndex((f) => f && f.id === row.f.id);
+      if (k >= 0 && p.hunger < max - 0.5) {
+        p.bag.splice(k, 1);
+        p.hunger = Math.min(max, p.hunger + row.food);
+        res = { ok: true, text: `Megetted: ${row.f.name} (+${row.food} a tányérra).` };
+      } else res = { ok: false, text: 'Tele a tányér: most egy falat sem fér beléd.' };
+    }
+    this.note = res.text;
+    if (res.ok) g.saveNow?.();
+    const rows = this.groups();
+    this.sel = Math.max(0, Math.min(this.sel, rows.length - 1));
+    this.render();
   }
 
   render() {
@@ -107,28 +166,43 @@ export class BagView {
     const bag = p?.bag || [];
     const cap = p?.bagCap ?? BAG_TIERS[0].cap;
     const tier = BAG_TIERS[p?.bagTier || 0]?.name || '';
-    const groups = new Map();
-    for (const f of bag) {
-      const e = groups.get(f.id) || { f, n: 0 };
-      e.n++;
-      groups.set(f.id, e);
-    }
-    const list = [...groups.values()].sort((a, b) => b.f.value - a.f.value).map(({ f, n }) =>
-      `<li><i style="background:${hex(f.color, '#8a7a5a')}"></i><span>${f.name}</span><b>×${n}</b><em>${f.value * n} arany</em></li>`).join('');
+    const rows = this.groups();
+    this.sel = Math.max(0, Math.min(this.sel, rows.length - 1));
+    const SEL = 'background:#e8c87066;box-shadow:inset 0 0 0 1px #8a5a2099;border-radius:3px';
+    const list = rows.map(({ f, n, food }, k) =>
+      `<li data-k="${k}" style="${k === this.sel ? SEL : ''}"><i style="background:${hex(f.color, '#8a7a5a')}"></i><span>${f.name}</span><b>×${n}</b><em>${f.value * n} arany${food ? ` <small style="color:#3a5a14">· étel +${food}</small>` : ''}</em></li>`).join('');
     const sum = bag.reduce((s, f) => s + (f.value || 0), 0);
     const other = g.players.length > 1 ? '<span>balra / jobbra: a másik zsák</span><span class="or">·</span>' : '';
+    const cur = rows[this.sel];
+    const hasFood = rows.some((r) => r.food);
+    const max = g.bagEnd?.effects?.hungerMax ?? HUNGER.max;
+    const plate = p ? Math.round((Math.max(0, p.hunger) / max) * 100) : 0;
+    const eatLine = !hasFood ? '' : `<p class="bg-eatline" style="margin:0.4rem 0 0;display:flex;gap:0.5em;align-items:center;flex-wrap:wrap;font-size:0.9em">
+        ${cur?.food ? `<button class="bg-eat" type="button" style="font:inherit;padding:0.15em 0.7em;border:1px solid #5a3a1a;border-radius:4px;background:#e8d4a0;color:#3a2410;cursor:pointer">Megeszem</button><span>${cur.f.name}: +${cur.food} a tányérra (most ${plate} %)</span>`
+          : '<span>Fel / le: válassz egy ételt a zsákból.</span>'}
+      </p>`;
+    const note = this.note ? `<p class="bg-note" style="margin:0.3rem 0 0;font-style:italic;color:#4a2a0a">${this.note}</p>` : '';
     this.el.innerHTML = `<div class="bg-room">
       <div class="bg-sack">${sackTop(bag)}</div>
       <div class="bg-card">
         <h2>Zsák</h2>
         <p class="bg-who"><b style="color:${hex(p?.ch?.color, '#7a3a10')}">${p?.ch?.name || 'Játékos'}</b> · ${tier}</p>
         <p class="bg-fill"><b>${bag.length} / ${cap}</b> hely${bag.length >= cap ? ' · <span class="full">tele a zsák!</span>' : ''}</p>
-        ${bag.length ? `<ul class="bg-list">${list}</ul><p class="bg-sum">Összesen <b>${sum} arany</b> értékű (a Zöld Sárkány pultjánál vagy Bárdnál adhatod el).</p>` : '<p class="bg-empty">A zsák üres: egy zsebkendő sincs benne.</p>'}
-        <p class="bg-keys">${other}<span>B / Esc: vissza</span></p>
+        ${bag.length ? `<ul class="bg-list">${list}</ul>${eatLine}<p class="bg-sum">Összesen <b>${sum} arany</b> értékű (a Zöld Sárkány pultjánál vagy Bárdnál adhatod el).</p>` : '<p class="bg-empty">A zsák üres: egy zsebkendő sincs benne.</p>'}
+        ${note}
+        <p class="bg-keys">${hasFood ? '<span>fel / le: választás</span><span class="or">·</span><span>A / Enter / Szóköz: megeszem</span><span class="or">·</span>' : ''}${other}<span>B / Esc: vissza</span></p>
         <button class="bg-back" type="button">Vissza</button>
       </div>
     </div>`;
     this.el.querySelector('.bg-back').addEventListener('click', () => this.onBack?.());
+    this.el.querySelector('.bg-eat')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.eat();
+    });
+    this.el.querySelectorAll('.bg-list li').forEach((li) => li.addEventListener('click', () => {
+      this.sel = +li.dataset.k;
+      this.render();
+    }));
   }
 }
 
