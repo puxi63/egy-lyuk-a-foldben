@@ -1,7 +1,12 @@
 /* ==== lift.js — the barrel lift (TERV 0.4 "Gyorsutazás"): a stop per layer, built once the layer is reached;
-   the ride is a short fade (the rope runs in its own narrow shaft), co-op partners close by ride along ==== */
+   the ride is a short fade (the rope runs in its own narrow shaft), co-op partners close by ride along.
+   NOTES-35-lift-doors-bag: a built stop's landing floor is a locked slab (underground/sites.js addLocks), so it cannot
+   be dug away; on every arrival the slab is checked and any soil missing from it (an older save, dug before the lock)
+   is put back (world.js fillBox, never past the generated field), and the riders land with no fall damage. ==== */
 import * as THREE from 'three';
-import { digSphere } from './world.js';
+import { baseField } from './save.js';
+import { addLocks } from './underground/sites.js';
+import { digSphere, fillBox, setLockHook } from './world.js';
 
 /** The lift column (inside the block, near the south edge) and the surface crane beside the pit. */
 const COLUMN = { x: -4, z: 9.0 };
@@ -44,6 +49,15 @@ export const LIFT_SPEEDS = [
 
 const NEAR = 2.4; // metres from a station to use it
 const FADE = 0.35; // seconds of fade out / in
+
+/**
+ * NOTES-35-lift-doors-bag: the locked floor slab under a stop's landing room, relative to the station (x, z round the
+ * column; y below the stop depth). Its top stays 0.15 m under the carved floor at the riders' spots (about −0.6 m), so
+ * the floor can be scraped at most that much; it is 1.45 m thick and covers the whole landing room.
+ */
+const SLAB = { x0: -2.3, x1: 2.6, z0: -1.9, z1: 1.9, top: -0.75, bottom: -2.2 };
+/** Seconds of no fall damage after arriving (safety/ `safeFallT`). */
+const ARRIVE_SAFE = 1.5;
 
 /** World position of a stop's station (where the barrel waits). */
 function stationPos(stop, out = new THREE.Vector3()) {
@@ -107,6 +121,61 @@ export class Lift {
     this.landings = new Map();
     this.rides = []; // { players, from, to, t, dur, phase }
     this.menus = new Map(); // player → { el, sel }
+    this.slabs = new Map(); // stop id → its locked floor box (NOTES-35)
+    this.game = null; // set by update(); the locked-dig line needs the players
+    this.digSaidT = 0;
+    setLockHook((x, y, z) => this.lockedDig(x, y, z));
+  }
+
+  /** NOTES-35: the world box of a stop's floor slab (null for the surface stop: outside the diggable block). */
+  slabBox(stop) {
+    if (!stop.depth) return null;
+    const p = stationPos(stop);
+    return { x0: p.x + SLAB.x0, x1: p.x + SLAB.x1, y0: p.y + SLAB.bottom, y1: p.y + SLAB.top, z0: p.z + SLAB.z0, z1: p.z + SLAB.z1 };
+  }
+
+  /** NOTES-35: locks a built stop's floor slab (once). */
+  lockFloor(stop) {
+    if (this.slabs.has(stop.id)) return;
+    const b = this.slabBox(stop);
+    if (b) this.slabs.set(stop.id, addLocks([b])[0]);
+  }
+
+  /** world.js lock hook: a dig was refused somewhere; if at a stop's floor, the nearest player hears why (every 4 s). */
+  lockedDig(x, y, z) {
+    const g = this.game;
+    if (!g || performance.now() - this.digSaidT < 4000) return;
+    let at = false;
+    for (const b of this.slabs.values()) {
+      if (x > b.x0 - 1 && x < b.x1 + 1 && y > b.y0 - 1 && y < b.y1 + 1.2 && z > b.z0 - 1 && z < b.z1 + 1) at = true;
+    }
+    if (!at) return;
+    let who = null;
+    let best = 3;
+    for (const p of g.players) {
+      const d = Math.hypot(p.pos.x - x, p.pos.y + 1 - y, p.pos.z - z);
+      if (d < best && p.dead <= 0) {
+        best = d;
+        who = p;
+      }
+    }
+    if (!who) return;
+    this.digSaidT = performance.now();
+    who.say('A hordólift megállójának padlóját nem áshatod ki: erre érkezik a hordó. Odébb áss tovább lefelé.', 3);
+  }
+
+  /**
+   * NOTES-35: before the riders are put down at a stop, puts back any soil missing from its floor slab (only what the
+   * generated field had there), unless someone else stands in it (never bury a player). Returns the samples restored.
+   */
+  secureLanding(stop, riders, players) {
+    const b = this.slabBox(stop);
+    if (!b) return 0;
+    const inside = players.some((q) => !riders.includes(q) && q.pos.x > b.x0 - 0.5 && q.pos.x < b.x1 + 0.5 && q.pos.z > b.z0 - 0.5 && q.pos.z < b.z1 + 0.5 && q.pos.y > b.y0 - 2.0 && q.pos.y < b.y1 + 0.1);
+    if (inside) return 0;
+    const n = fillBox(b.x0, b.x1, b.y0, b.y1, b.z0, b.z1, baseField());
+    if (n > 0) this.restored = (this.restored || 0) + n;
+    return n;
   }
 
   /** Builds a stop: carves the landing room into the soil and puts the barrel there. */
@@ -114,6 +183,7 @@ export class Lift {
     if (this.built.has(stop.id)) return;
     this.built.add(stop.id);
     this.carve(stop);
+    this.lockFloor(stop); // NOTES-35: after the carving (the carve's floor samples stay as dug)
   }
 
   carve(stop) {
@@ -222,6 +292,7 @@ export class Lift {
 
   /** Advances the rides: fade out, travel, place the riders at the destination, fade in. */
   update(dt, game) {
+    this.game = game;
     for (const r of this.rides) {
       r.t += dt;
       const fade = r.t < FADE ? r.t / FADE : r.t > r.dur - FADE ? Math.max(0, (r.dur - r.t) / FADE) : 1;
@@ -231,7 +302,12 @@ export class Lift {
         // Hold the riders at the start until fully dark, then at the destination.
         if (r.t > FADE && !r.moved) {
           const b = stationPos(r.to);
-          r.riders.forEach((p, k) => p.pos.set(b.x + 0.6 + k * 0.7, r.to.depth ? b.y - 0.55 : 0.05, b.z + (r.to.depth ? 0 : 1.2)));
+          // NOTES-35: the floor first (soil dug away under the stop is put back), then the riders, safe from a fall.
+          this.secureLanding(r.to, r.riders, game.players);
+          r.riders.forEach((p, k) => {
+            p.pos.set(b.x + 0.6 + k * 0.7, r.to.depth ? b.y - 0.55 : 0.05, b.z + (r.to.depth ? 0 : 1.2));
+            p.safeFallT = Math.max(p.safeFallT || 0, ARRIVE_SAFE);
+          });
           r.moved = true;
         }
       }
@@ -239,6 +315,7 @@ export class Lift {
         for (const q of r.riders) {
           q.riding = false;
           q.fade = 0;
+          q.safeFallT = Math.max(q.safeFallT || 0, ARRIVE_SAFE); // NOTES-35: the first steps off the barrel are safe too
         }
       }
     }
@@ -260,6 +337,7 @@ export class Lift {
         this.built.add(id);
         this.carve(stop);
       }
+      if (stop) this.lockFloor(stop); // NOTES-35
     }
   }
 }

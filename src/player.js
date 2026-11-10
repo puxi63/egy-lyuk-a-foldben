@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { BAG_TIERS, HUNGER, LADDER_LEN, ORIGIN, PLAYER, TOOL_TIERS } from './config.js';
 import { materialAt, MATS } from './materials.js';
 import { digSphere, normalAt, raycast, sdf } from './world.js';
-import { LADDER_CAP, pushOutOfSurface, SPAWN_POS } from './props.js';
+import { clearLadderSpot, LADDER_CAP, pushOutOfSurface, SPAWN_POS } from './props.js';
 import { CharacterBody, viewForearm } from './characters.js';
 import { armourAsset, armourOf } from './enemies/armour.js';
 import { waterStep } from './underground/lake-water.js';
@@ -40,6 +40,38 @@ const tmpN = new THREE.Vector3();
 const DIRS = [];
 for (let x = -1; x <= 1; x++) for (let y = -1; y <= 1; y++) for (let z = -1; z <= 1; z++) if (x || y || z) DIRS.push(new THREE.Vector3(x, y, z).normalize());
 const tmpV = new THREE.Vector3();
+/** The five lower directions of the feet sphere (straight down and the four lower edges): the floor probes. */
+const FOOT_DIRS = DIRS.filter((d) => d.y < -0.6);
+
+/**
+ * Movement over rough soil (TODO item 22, NOTES-34-stuck-ladder).
+ * - `stepUp`: a walking player whose move is blocked tries the same move lifted by up to this much (m) and settles onto
+ *   what he stands on: steps, lumps and the rims of dug holes up to 0.42 m are walked over (the old body rode up only
+ *   about 0.12 m; anything higher stopped him dead).
+ * - `stepDown`: a player who was on the ground and walks off a drop up to this much stays on the ground (snapped down,
+ *   no hop and no landing), also down slopes.
+ * - `stepWait`: after an attempt that met a wall of full height the next one waits this long (s): pushing into a wall costs no
+ *   extra collision passes every frame.
+ * - `eyeRate`: the view follows a step smoothly (m/s), the body moves at once.
+ * - `stuckEmbed` / `stuckPush`: the unstuck step runs once a body centre has been inside the solid this long (s), or the
+ *   collision has stayed unresolved (a sample still `stuckDeep` m or more inside) while the player pushes without
+ *   getting anywhere this long; it searches the nearest free spot (up first, at
+ *   most 0.8 m up or `stuckReach` m sideways, never through a ceiling or across more than `stuckWall` m of solid) at most every `stuckEvery` s.
+ */
+export const MOVE = { stepUp: 0.42, stepDown: 0.45, stepWait: 0.07, eyeRate: 2.6, stuckEmbed: 0.15, stuckPush: 0.6, stuckReach: 0.6, stuckDeep: 0.08, stuckWall: 0.2, stuckEvery: 0.25 };
+/** The unstuck search's candidate offsets (built once): up first, then sideways in growing rings, then down. */
+const UNSTUCK = [];
+for (let k = 1; k <= 8; k++) UNSTUCK.push([0, k * 0.1, 0]);
+for (const r of [0.15, 0.3, 0.45, 0.6]) {
+  for (let a = 0; a < 8; a++) UNSTUCK.push([Math.cos((a * Math.PI) / 4) * r, 0, Math.sin((a * Math.PI) / 4) * r]);
+  for (let a = 0; a < 8; a++) UNSTUCK.push([Math.cos((a * Math.PI) / 4) * r, 0.2, Math.sin((a * Math.PI) / 4) * r]);
+}
+for (let k = 1; k <= 3; k++) UNSTUCK.push([0, -k * 0.12, 0]);
+/** The saved state of a step attempt (no allocation per frame). */
+const stepSave = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, g: false };
+/** The foot's rim: 8 points 0.27 m around the feet (just outside the body's 0.25 m) (x, z pairs), see rimTop(). */
+const RIM = [];
+for (let a = 0; a < 8; a++) RIM.push(Math.cos((a * Math.PI) / 4) * 0.27, Math.sin((a * Math.PI) / 4) * 0.27);
 
 /**
  * Co-op pass-through (TODO item 20, NOTES-32-ladder-coop): the players have no collision with each other (no body is a
@@ -414,19 +446,48 @@ export class Player {
     else this.water = null;
     // ---- end of the water block ----
     const prevX = this.pos.x;
+    const prevY = this.pos.y;
     const prevZ = this.pos.z;
+    // The move the player means this frame (his steering direction at his current speed): a slide along a step's face
+    // has lost the push into it, so the velocity alone would never ask for the step.
+    const sp = Math.max(Math.hypot(this.vel.x, this.vel.z), 0.5) * dt;
+    const ex = wx * sp;
+    const ez = wz * sp;
     this.pos.addScaledVector(this.vel, dt);
     const impact = -this.vel.y;
     const wasGrounded = this.grounded;
+    // Stood on the soil itself last frame (not only held up by a platform that sets `grounded`, coop-actions/hoist.js).
+    const wasSoil = !!this.onSoil;
     this.collide();
-    // Squeezed between floor and ceiling (the head still in the soil): the passage is too low, step back.
-    const head = this.spheres[this.spheres.length - 1];
-    if (!inside && sdf(this.pos.x, this.pos.y + head, this.pos.z) > -PLAYER.radius * 0.5) {
+    this.onSoil = this.grounded;
+    // Rough soil (NOTES-34-stuck-ladder): step up onto what blocks a walking move, stay on the ground down small drops
+    // (also wading; not swimming).
+    const walking = !inside && !this.climbing && wl > 0.1 && this.vel.y <= 0.5 && !this.water?.swimming;
+    this.stepWait = Math.max(0, (this.stepWait || 0) - dt);
+    if (walking && (wasSoil || this.grounded) && this.stepWait <= 0) this.stepUp(prevX, prevY, prevZ, ex, ez);
+    if (!inside && wasSoil && wasGrounded && !this.grounded && !this.climbing && this.vel.y <= 0 && !this.water?.swimming) this.stepDown();
+    this.onSoil = this.grounded;
+    // Squeezed between floor and ceiling (the head's crown in the soil): the passage is too low, step back. Only the
+    // solid side is trusted (the air of a partly dug tunnel reads shallow everywhere: the old test, the head's centre
+    // nearer than 0.125 m to "a surface" by the field, stopped players dead in most hand-dug tunnels). The move into
+    // the obstacle is undone per axis first, so the player still slides along a low edge.
+    this.lowHead = !inside && this.squeezed();
+    if (this.lowHead) {
+      const mx2 = this.pos.x;
       this.pos.x = prevX;
-      this.pos.z = prevZ;
-      this.vel.x = 0;
-      this.vel.z = 0;
+      if (this.squeezed()) {
+        this.pos.x = mx2;
+        this.pos.z = prevZ;
+        if (this.squeezed()) this.pos.x = prevX;
+        else this.vel.z = 0;
+      } else this.vel.x = 0;
+      if (this.pos.x === prevX && this.pos.z === prevZ) {
+        this.vel.x = 0;
+        this.vel.z = 0;
+      }
     }
+    if (!inside && !this.climbing) this.unstuck(dt, wl > 0.1);
+    else this.stuckT = this.embedT = 0;
     // ---- safety (NOTES-11-safety): a landing hurts or kills by its speed (safety/index.js landFall: the modes, the
     // armour, the belay rope, water and rides), so digging down step by step is safe. ----
     if (this.grounded && !wasGrounded && !this.climbing && landFall(this, impact)) return;
@@ -481,10 +542,13 @@ export class Player {
       return;
     }
     this.grounded = false;
+    // True while the last pass still found the body in the soil (read by unstuck()).
+    this.unresolved = true;
     const r = PLAYER.radius;
     for (let iter = 0; iter < 5; iter++) {
       tmpV.set(0, 0, 0);
       let hits = 0;
+      let deepest = 0;
       for (const h of this.spheres) {
         const cy = this.pos.y + h;
         for (const d of DIRS) {
@@ -492,10 +556,15 @@ export class Player {
           if (depth <= 0) continue;
           tmpV.addScaledVector(d, -(depth + 0.004));
           hits++;
+          if (depth > deepest) deepest = depth;
           if (h === this.spheres[0] && d.y < -0.6) this.grounded = true;
         }
       }
-      if (!hits) break;
+      this.residual = deepest;
+      if (!hits) {
+        this.unresolved = false;
+        break;
+      }
       tmpV.multiplyScalar(1 / Math.sqrt(hits));
       tmpN.copy(tmpV).normalize();
       if (tmpN.y > 0.7) {
@@ -512,8 +581,224 @@ export class Player {
     }
     // A small probe under the feet keeps the grounded state stable on slopes.
     if (!this.grounded && this.vel.y <= 0.01 && sdf(this.pos.x, this.pos.y + this.spheres[0] - r - 0.05, this.pos.z) > 0) this.grounded = true;
+    // The foot's rim (NOTES-34-stuck-ladder): a ledge top under the body's edge holds the player (on a step's edge, a
+    // hole's rim) instead of letting him slide off it backwards.
+    // Only for a player who stood on the soil before (not one carried by a moving platform: the hoist's riders sink
+    // past the hole's edge and must not be caught on it).
+    if (!this.grounded && this.onSoil && this.vel.y <= 0.01 && this.vel.y > -3 && this.rimTop() !== null) {
+      this.pos.y = this.rimY;
+      if (this.vel.y < 0) this.vel.y = 0;
+      this.grounded = true;
+    }
     // The Shire's solid props (Bag End's hill, the inn, trees, posts, the spoil heap).
     if (this.pos.y > -2) pushOutOfSurface(this.pos, r);
+  }
+
+  /**
+   * A ledge top under the foot's rim (8 points 0.27 m around the feet): solid just under the feet and air 0.12 m above
+   * them. Returns the highest such top (also in `rimY`), or null. Only the solid side of the field is trusted.
+   */
+  rimTop() {
+    const x = this.pos.x;
+    const y = this.pos.y;
+    const z = this.pos.z;
+    let best = null;
+    for (let a = 0; a < 8; a++) {
+      const px = x + RIM[a * 2];
+      const pz = z + RIM[a * 2 + 1];
+      if (sdf(px, y - 0.03, pz) <= 0 || sdf(px, y + 0.12, pz) > 0) continue;
+      let lo = y - 0.03;
+      let hi = y + 0.12;
+      for (let n = 0; n < 4; n++) {
+        const m = (lo + hi) / 2;
+        if (sdf(px, m, pz) > 0) lo = m;
+        else hi = m;
+      }
+      if (best === null || lo > best) best = lo;
+    }
+    this.rimY = best;
+    return best;
+  }
+
+  /** Can the body stand at its feet's level here: the feet sphere's floor probes or the foot's rim touch a top? */
+  supported() {
+    const r = PLAYER.radius;
+    const cy = this.pos.y + this.spheres[0];
+    for (const d of FOOT_DIRS) if (sdf(this.pos.x + d.x * r, cy + d.y * (r + 0.03), this.pos.z + d.z * r) > 0) return true;
+    return this.rimTop() !== null;
+  }
+
+  /** The head's crown is in the soil (solid side only): the passage is too low for this body. */
+  squeezed() {
+    const head = this.spheres[this.spheres.length - 1];
+    return sdf(this.pos.x, this.pos.y + head + PLAYER.radius * 0.4, this.pos.z) > 0;
+  }
+
+  /**
+   * Step-up (NOTES-34-stuck-ladder): the walking move (ex, ez) from (px, py, pz) was blocked; try it lifted by up to
+   * MOVE.stepUp and settle down onto what is under the feet. Standing on an edge (no floor right under the body's
+   * centre), the move is also tried lowered by up to MOVE.stepDown: going down a step whose ceiling comes down with
+   * it (the head met the lower ceiling ahead while the feet still stood on the edge); with no floor there yet it is a
+   * plain fall from the lowered spot. Kept only when it gets clearly
+   * further, stands on something and the head fits; else the blocked result stays. Only on blocked frames: at most
+   * four collision passes and ~15 floor probes.
+   */
+  stepUp(px, py, pz, ex, ez) {
+    const el = Math.hypot(ex, ez);
+    if (el < 1e-4) return;
+    const ux = ex / el;
+    const uz = ez / el;
+    const got = (this.pos.x - px) * ux + (this.pos.z - pz) * uz;
+    if (got > el * 0.92) return;
+    const need = Math.max(el * 0.6, got + el * 0.15);
+    const crown = this.spheres[this.spheres.length - 1] + PLAYER.radius;
+    stepSave.x = this.pos.x;
+    stepSave.y = this.pos.y;
+    stepSave.z = this.pos.z;
+    stepSave.vx = this.vel.x;
+    stepSave.vy = this.vel.y;
+    stepSave.vz = this.vel.z;
+    stepSave.g = this.grounded;
+    // As high as the head room allows here and at the end of the move (a low tunnel still steps over small lumps).
+    let up = MOVE.stepUp;
+    while (up > 0.1 && (sdf(px, py + crown + up, pz) > 0 || sdf(px + ex, py + crown + up, pz + ez) > 0)) up -= 0.08;
+    let wall = false;
+    if (up > 0.1) {
+      this.pos.set(px + ex, py + up, pz + ez);
+      this.collide();
+      const lifted = (this.pos.x - px) * ux + (this.pos.z - pz) * uz;
+      // Lifted no further at all: a wall of full height (the next attempt waits a moment, see MOVE.stepWait).
+      wall = lifted < got + el * 0.05;
+      // Lifted, the move must get clearly further (a wall stays a wall: no floor search then).
+      if (lifted > need) {
+        // Down onto the step's top.
+        for (let d = 0; d <= up + 0.06; d += 0.03) {
+          if (this.supported()) {
+            this.collide();
+            const rise = this.pos.y - py;
+            if ((this.pos.x - px) * ux + (this.pos.z - pz) * uz > need && rise > 0.01 && rise < up + 0.05 && !this.squeezed() && this.supported()) {
+              this.stepDone();
+              return;
+            }
+            break;
+          }
+          this.pos.y -= 0.03;
+        }
+      }
+    }
+    if (sdf(px, py - 0.08, pz) <= 0) {
+      for (let down = 0.15; down <= MOVE.stepDown + 0.001; down += 0.15) {
+        this.pos.set(px + ex, py - down, pz + ez);
+        this.collide();
+        if ((this.pos.x - px) * ux + (this.pos.z - pz) * uz > need && this.pos.y < py - 0.01 && !this.squeezed()) {
+          // On the lower floor, or off the edge (ducking under the ceiling ahead): then a plain fall from here.
+          if (this.supported()) this.stepDone();
+          else {
+            this.grounded = false;
+            this.stepEye = Math.min(0.5, (this.stepEye || 0) + (stepSave.y - this.pos.y));
+          }
+          return;
+        }
+      }
+    }
+    this.pos.set(stepSave.x, stepSave.y, stepSave.z);
+    this.vel.set(stepSave.vx, stepSave.vy, stepSave.vz);
+    this.grounded = stepSave.g;
+    // A real wall: no new attempt for a moment (pushing into a wall costs no extra passes every frame).
+    if (wall) this.stepWait = MOVE.stepWait;
+  }
+
+  /** A kept step: on the ground, no fall speed, the view follows the height change smoothly. */
+  stepDone() {
+    this.grounded = true;
+    if (this.vel.y < 0) this.vel.y = 0;
+    this.stepEye = Math.max(-0.5, Math.min(0.5, (this.stepEye || 0) - (this.pos.y - stepSave.y)));
+  }
+
+  /**
+   * Step-down (NOTES-34-stuck-ladder): a player who was on the ground and is not any more (walked off a small drop or
+   * down a slope) is put back on the ground below, if it is within MOVE.stepDown; no hop, no landing. A larger drop is
+   * a real fall (the safety rules unchanged).
+   */
+  stepDown() {
+    const y0 = this.pos.y;
+    for (let d = 0.03; d <= MOVE.stepDown; d += 0.03) {
+      this.pos.y = y0 - d;
+      if (this.supported()) {
+        this.collide();
+        this.grounded = true;
+        this.vel.y = 0;
+        this.stepEye = Math.min(0.5, (this.stepEye || 0) + (y0 - this.pos.y));
+        return;
+      }
+    }
+    this.pos.y = y0;
+  }
+
+  /** The body fits at (x, y, z): each sphere's centre and its six axis points are out of the solid. */
+  fitsAt(x, y, z) {
+    const r = PLAYER.radius * 0.9;
+    for (const h of this.spheres) {
+      const cy = y + h;
+      if (sdf(x, cy, z) > 0 || sdf(x + r, cy, z) > 0 || sdf(x - r, cy, z) > 0 || sdf(x, cy, z + r) > 0 || sdf(x, cy, z - r) > 0) return false;
+      if (sdf(x, cy + r, z) > 0 || sdf(x, cy - r, z) > 0) return false;
+    }
+    return true;
+  }
+
+  /**
+   * The unstuck step (NOTES-34-stuck-ladder): when a body centre has stayed inside the solid, or the collision stayed
+   * unresolved while the player pushed, the nearest spot where the body fits is searched (UNSTUCK: up first, then
+   * sideways rings, then down; at most MOVE.stuckReach). Up only while the crown is in the air and the way up for the
+   * crown stays air (never up through a ceiling); down only while the feet are in the air (never down through a
+   * floor); sideways only across at most MOVE.stuckWall m of solid (never through a wall into the next room).
+   */
+  unstuck(dt, pushing) {
+    // The feet and middle spheres' centres (the head in a low ceiling is the squeeze's business: lowHead).
+    const emb = sdf(this.pos.x, this.pos.y + this.spheres[0], this.pos.z) > 0.02 || sdf(this.pos.x, this.pos.y + this.spheres[1], this.pos.z) > 0.02;
+    this.embedT = emb ? (this.embedT || 0) + dt : 0;
+    // Pushing without getting anywhere (within 5 cm of where it began) while the soil still holds the body; not a
+    // passage that is merely too low for the head (that one is a plain stop, lowHead).
+    if (!pushing || !this.unresolved || this.residual < MOVE.stuckDeep || this.lowHead || Math.abs(this.pos.x - (this.stuckX ?? 1e9)) + Math.abs(this.pos.z - (this.stuckZ ?? 1e9)) > 0.05) {
+      this.stuckT = 0;
+      this.stuckX = this.pos.x;
+      this.stuckZ = this.pos.z;
+    } else this.stuckT = (this.stuckT || 0) + dt;
+    this.unstuckCd = Math.max(0, (this.unstuckCd || 0) - dt);
+    if (this.unstuckCd > 0 || (this.embedT < MOVE.stuckEmbed && this.stuckT < MOVE.stuckPush)) return;
+    this.unstuckCd = MOVE.stuckEvery;
+    const x = this.pos.x;
+    const y = this.pos.y;
+    const z = this.pos.z;
+    const r = PLAYER.radius;
+    const crown = y + this.spheres[this.spheres.length - 1] + r * 0.5;
+    const crownFree = sdf(x, crown, z) <= 0;
+    const feetFree = sdf(x, y + this.spheres[0] - r * 0.5, z) <= 0;
+    const mid = this.spheres[1];
+    for (let i = 0; i < UNSTUCK.length; i++) {
+      const o = UNSTUCK[i];
+      if (o[1] > 0 && !o[0] && !o[2]) {
+        if (!crownFree) continue;
+        let clear = true;
+        for (let k = 0.1; k <= o[1] + 0.001 && clear; k += 0.1) if (sdf(x + o[0], crown + k, z + o[2]) > 0) clear = false;
+        if (!clear) continue;
+      }
+      if (o[1] < 0 && !feetFree) continue;
+      if (o[0] || o[2]) {
+        // Not across a wall: the way between at mid-body height crosses at most MOVE.stuckWall of solid.
+        if (sdf(x + o[0] * 0.5, y + mid, z + o[2] * 0.5) > MOVE.stuckWall || sdf(x + o[0], y + mid, z + o[2]) > MOVE.stuckWall) continue;
+      }
+      if (!this.fitsAt(x + o[0], y + o[1], z + o[2])) continue;
+      this.pos.set(x + o[0], y + o[1], z + o[2]);
+      if (this.vel.y < 0) this.vel.y = 0;
+      this.vel.x = 0;
+      this.vel.z = 0;
+      this.collide();
+      this.embedT = 0;
+      this.stuckT = 0;
+      this.unstucks = (this.unstucks || 0) + 1;
+      return;
+    }
   }
 
   tryDig() {
@@ -593,7 +878,7 @@ export class Player {
       this.say('Itt már áll egy létra. Mássz a tetejére, ott folytathatod.');
       return;
     }
-    // Otherwise lean it on the wall in front, foot at the player's feet.
+    // Otherwise lean it on the wall in front, foot on the floor at the player's feet.
     const o = new THREE.Vector3(this.pos.x, this.pos.y + 0.6, this.pos.z);
     const d = new THREE.Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
     const t = raycast(o, d, 1.6);
@@ -609,6 +894,16 @@ export class Player {
     const foot = wall.addScaledVector(tmpN, 0.18);
     foot.y = this.pos.y;
     // Too near the surface: the ladder would stick out of the ground (a capped one needs LADDER_CAP.min m left).
+    if (L.lenAt(foot.x, foot.y, foot.z) < LADDER_CAP.min) {
+      this.sayTooHigh();
+      return;
+    }
+    // Clear of the soil (NOTES-34-stuck-ladder): out from the wall as far as needed, the foot on the floor; no clear
+    // spot: refused, the ladder kept.
+    if (clearLadderSpot(foot, tmpN, L.lenAt(foot.x, foot.y, foot.z)) < 0) {
+      this.say('Itt nem fér el a létra: ásd ki jobban a falat előtte.', 3);
+      return;
+    }
     if (L.lenAt(foot.x, foot.y, foot.z) < LADDER_CAP.min) {
       this.sayTooHigh();
       return;
@@ -663,6 +958,7 @@ export class Player {
     this.downT = 0;
     this.pos.copy(SPAWN_POS).add(tmpV.set(this.slot * 1.2, 0, 0));
     this.vel.set(0, 0, 0);
+    this.stepEye = 0;
     this.hunger = Math.max(this.hunger, HUNGER.respawnLevel);
     this.faint = 0;
   }
@@ -672,7 +968,10 @@ export class Player {
     // Knocked down (safety/): the view drops towards the floor and tilts, then rises as the player gets up.
     const downK = this.dead > 0 ? 0 : Math.min(1, (this.downT || 0) / 0.45);
     const eyeY = this.dead > 0 ? 0.25 : this.eyeH - downK * (this.eyeH - 0.45);
-    this.camera.position.set(this.pos.x, this.pos.y + eyeY, this.pos.z);
+    // A step up or down (NOTES-34-stuck-ladder): the view follows smoothly.
+    const se = this.stepEye || 0;
+    this.stepEye = se > 0 ? Math.max(0, se - MOVE.eyeRate * dt) : Math.min(0, se + MOVE.eyeRate * dt);
+    this.camera.position.set(this.pos.x, this.pos.y + eyeY + this.stepEye, this.pos.z);
     this.seeThrough(); // co-op pass-through (NOTES-32-ladder-coop)
     this.kick = Math.max(0, (this.kick || 0) - dt * 7);
     const kick = this.kick * this.kick * 0.035;

@@ -14,6 +14,7 @@ import { SURFACE_TIME, surfaceMats } from './surface/mats.js';
 import { buildShire } from './surface/shire.js';
 import { buildSky, buildSmoke } from './surface/sky.js';
 import { surfaceHeight } from './world-gen.js';
+import { sdf } from './world.js';
 
 /** Where the counter of the Zöld Sárkány stands (the shop opens within 3.2 m), and where players respawn. */
 export const SHOP_POS = new THREE.Vector3(5.5, 0, 16.5);
@@ -156,6 +157,73 @@ export const LADDER_CAP = { cap: 1.0, min: 1.5, short: 0.3 };
 export function ladderTopCap(x, z) {
   return surfaceHeight(x, z) + groundHeight(x, z) + LADDER_CAP.cap;
 }
+
+/**
+ * A new ladder clear of the soil (TODO item 23, NOTES-34-stuck-ladder). From the spot in front of the wall the ladder
+ * is moved out along the wall's normal in `step` m steps (at most `maxOut` m) and its foot set onto the floor there
+ * (the first soil under the spot, from `floorUp` m above the player's feet to `floorDown` m below them). At each try
+ * the ladder is clear up to the height where its axis, its rails (±`rail` m, a graze of `graze` m allowed) and the
+ * climbing body in front of it (`front` m out from the axis) are all out of the soil; it stops at the first soil above
+ * (a ceiling ends a ladder anyway). The nearest try that is clear (nearly) as high as the best one wins; less than
+ * `minClear` m everywhere: no spot (the placement is refused and the ladder kept).
+ */
+export const LADDER_CLEAR = { step: 0.05, maxOut: 0.6, floorUp: 0.6, floorDown: 0.8, rail: 0.2, graze: 0.05, front: 0.3, minClear: 1.8, slack: 0.2 };
+
+/**
+ * Finds the clear spot for a new ladder whose foot would be at `foot` (x, z in front of the wall, y the player's feet),
+ * leaning on a wall with the horizontal outward unit normal `n`. Moves `foot` there and returns the clear height
+ * (m, at most `len`), or −1 when no spot is clear (foot unchanged then).
+ */
+export function clearLadderSpot(foot, n, len) {
+  const C = LADDER_CLEAR;
+  const lx = -n.z;
+  const lz = n.x;
+  let best = -1;
+  let bestOff = 0;
+  let bestY = 0;
+  const tries = Math.round(C.maxOut / C.step);
+  const res = clearTry;
+  for (let i = 0; i <= tries; i++) {
+    const x = foot.x + n.x * C.step * i;
+    const z = foot.z + n.z * C.step * i;
+    res[i * 2] = -1;
+    // The floor: the first soil under the spot (the start must be air: else this try is still inside the wall).
+    let fy = null;
+    if (sdf(x, foot.y + C.floorUp, z) > 0) continue;
+    for (let d = 0; d <= C.floorUp + C.floorDown; d += 0.04) {
+      if (sdf(x, foot.y + C.floorUp - d, z) > 0) {
+        fy = foot.y + C.floorUp - d + 0.02;
+        break;
+      }
+    }
+    if (fy === null) fy = foot.y;
+    let h = 0.15;
+    for (; h <= len; h += 0.2) {
+      const y = fy + h;
+      if (sdf(x, y, z) > 0) break;
+      if (sdf(x + lx * C.rail, y, z + lz * C.rail) > C.graze || sdf(x - lx * C.rail, y, z - lz * C.rail) > C.graze) break;
+      if (h >= 0.3 && sdf(x + n.x * C.front, y, z + n.z * C.front) > 0) break;
+    }
+    const clear = Math.min(len, h - 0.15);
+    res[i * 2] = clear;
+    res[i * 2 + 1] = fy;
+    if (clear > best + 1e-6) best = clear;
+  }
+  if (best < Math.min(C.minClear, len)) return -1;
+  for (let i = 0; i <= tries; i++) {
+    if (res[i * 2] >= best - C.slack) {
+      bestOff = C.step * i;
+      bestY = res[i * 2 + 1];
+      break;
+    }
+  }
+  foot.x += n.x * bestOff;
+  foot.z += n.z * bestOff;
+  foot.y = bestY;
+  return best;
+}
+/** Per-try results of clearLadderSpot (clear height, floor y), reused. */
+const clearTry = new Float64Array(64);
 
 const ladderM = new THREE.Matrix4();
 const ladderQ = new THREE.Quaternion();

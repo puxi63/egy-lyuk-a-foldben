@@ -311,10 +311,13 @@ export class Hud {
     // ui (NOTES-19-ui): the rope slot glows while this player belays or hangs on a rope.
     this.set('roped', !!(p.belay || game.safety?.belayerOf(p)), (v) => r.qa[3].classList.toggle('lit', v));
 
-    // Prompt at the counter.
-    const prompt = nearShop && !this.shopOpen && !p.choosing ? 1 : 0;
+    // Prompt at the counter; NOTES-35-lift-doors-bag: else at a co-op door's lever or rune stone (underground/coop.js).
+    const door = nearShop || p.choosing ? null : game.decor?.coop?.promptFor?.(p, game.players);
+    const prompt = nearShop && !this.shopOpen && !p.choosing ? 1 : door ? `${door.key ? 1 : 0}|${door.text}` : 0;
     this.set('prompt', prompt, (v) => {
-      r.prompt.innerHTML = v ? `<span class="pr-in"><span>A Zöld Sárkány pultja</span>${g.interact}</span>` : '';
+      if (v === 1) r.prompt.innerHTML = `<span class="pr-in"><span>A Zöld Sárkány pultja</span>${g.interact}</span>`;
+      else if (v) r.prompt.innerHTML = `<span class="pr-in"><span>${door.text}</span>${door.key ? g.interact : ''}</span>`;
+      else r.prompt.innerHTML = '';
     });
 
     this.updateMessages(p);

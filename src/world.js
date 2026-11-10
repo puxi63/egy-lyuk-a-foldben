@@ -157,6 +157,7 @@ export function digSphere(x, y, z, r, bite = 255) {
   const vol = CELL * CELL * CELL;
   let removed = 0;
   const locked = lockTouches(x, y, z, r + 2 * CELL);
+  let hitLock = false;
   for (let k = k0; k <= k1; k++) {
     const pz = ORIGIN.z + k * CELL - z;
     for (let j = j0; j <= j1; j++) {
@@ -165,22 +166,71 @@ export function digSphere(x, y, z, r, bite = 255) {
         const px = ORIGIN.x + i * CELL - x;
         const s = sIdx(i, j, k);
         const old = density[s];
-        // The shells around the co-op treasure niches cannot be dug (only their doors lead in).
-        if (locked && isLocked(px + x, py + y, pz + z)) continue;
         const v = Math.max(clamp8(((Math.sqrt(px * px + py * py + pz * pz) - r) / CELL) * DSCALE), old - bite);
-        if (v < old) {
-          if (old > 0 && v <= 0) {
-            removed += vol;
-            digStats.removedSamples++;
-            byMat[materialAt(px + x, py + y, pz + z)] += vol;
-          }
-          density[s] = v;
+        if (v >= old) continue;
+        // The locked shells (the co-op treasure niches, the lift stops' floors, ...) cannot be dug.
+        if (locked && isLocked(px + x, py + y, pz + z)) {
+          hitLock = true;
+          continue;
         }
+        if (old > 0 && v <= 0) {
+          removed += vol;
+          digStats.removedSamples++;
+          byMat[materialAt(px + x, py + y, pz + z)] += vol;
+        }
+        density[s] = v;
       }
     }
   }
   touchChunks(i0, i1, j0, j1, k0, k1);
+  if (hitLock && lockHook !== null) lockHook(x, y, z);
   return { removed, byMat };
+}
+
+/** NOTES-35-lift-doors-bag: called as fn(x, y, z) (the sphere's centre) when a dig left locked samples alone. */
+let lockHook = null;
+
+/** Registers the locked-dig listener (lift.js: the "you cannot dig the stop's floor" line); null removes it. */
+export function setLockHook(fn) {
+  lockHook = fn;
+}
+
+/**
+ * NOTES-35-lift-doors-bag: restores a slab of soil: every sample in the box [x0, x1] × [y0, y1] × [z0, z1] becomes
+ * solid by its distance below the top face y1 (the samples just above it get the matching surface value), never more
+ * than `limit` (the generated field, so air the world was made with stays air; null = no cap). Air turned back into
+ * soil that was solid in the field is taken off digStats, as fillSphere does. Returns the samples turned solid.
+ */
+export function fillBox(x0, x1, y0, y1, z0, z1, limit) {
+  const i0 = Math.max(EDGE_LOCK, Math.ceil((x0 - ORIGIN.x) / CELL));
+  const i1 = Math.min(NX - 1 - EDGE_LOCK, Math.floor((x1 - ORIGIN.x) / CELL));
+  const j0 = Math.max(EDGE_LOCK, Math.ceil((y0 - ORIGIN.y) / CELL));
+  const j1 = Math.min(NY - 1, Math.floor((y1 - ORIGIN.y) / CELL) + 2);
+  const k0 = Math.max(EDGE_LOCK, Math.ceil((z0 - ORIGIN.z) / CELL));
+  const k1 = Math.min(NZ - 1 - EDGE_LOCK, Math.floor((z1 - ORIGIN.z) / CELL));
+  if (i0 > i1 || j0 > j1 || k0 > k1) return 0;
+  let filled = 0;
+  let changed = false;
+  for (let k = k0; k <= k1; k++) {
+    for (let j = j0; j <= j1; j++) {
+      const target = clamp8(((y1 - (ORIGIN.y + j * CELL)) / CELL) * DSCALE);
+      for (let i = i0; i <= i1; i++) {
+        const s = sIdx(i, j, k);
+        const old = density[s];
+        const cap = limit ? limit[s] : 127;
+        const v = target < cap ? target : cap;
+        if (v <= old) continue;
+        if (old <= 0 && v > 0) {
+          filled++;
+          digStats.removedSamples--;
+        }
+        density[s] = v;
+        changed = true;
+      }
+    }
+  }
+  if (changed) touchChunks(i0, i1, j0, j1, k0, k1);
+  return filled;
 }
 
 /**
