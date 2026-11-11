@@ -215,8 +215,8 @@ export class Modes {
     return this.helper.ropeKey(p);
   }
 
-  /** Counter rows (hud.js): the hired dwarf (single play, not in versus). */
+  /** Counter rows (hud.js): the hired dwarf (single play, not in versus); the hired company (NOTES-42-hirelings). */
   shopRows(p, cost) {
-    return this.versus ? [] : this.helper.shopRows(p, cost);
+    return this.versus ? [] : [...this.helper.shopRows(p, cost), ...(this.game.hirelings?.shopRows(p) || [])];
   }
 }

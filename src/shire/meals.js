@@ -14,7 +14,8 @@
  *   can keep the rhythm. Potatoes are not snacks (the Bag End kitchen cooks them).
  * - NOTES-35-lift-doors-bag: any BAG_FOOD (the snacks and a raw potato) can be eaten by hand from the bag screen
  *   (eatFromBag); inside a meal window that is the meal.
- * - The HUD reads `p.mealClock` ({ idx, now, turn, mood }) and `p.mealK` (player.js walk multiplier). */
+ * - The HUD reads `p.mealClock` ({ idx, now, turn, mood }) and `p.mealK` (player.js walk multiplier).
+ * - NOTES-42-hirelings: `p.mealK` also carries the walking bonus on Fíli's stair (hirelings walkMult). */
 import { MEALS } from '../ui/art.js';
 
 /** [from, to) game hours of each meal (Reggeli … Késői vacsora). Contiguous from 06:30 to 22:30. */
@@ -214,7 +215,8 @@ export class Meals {
         mc.turn = 0;
       }
       mc.mood = s.grumpy ? 'morcos' : this.fed(p, w) ? 'jóllakott' : '';
-      p.mealK = s.grumpy ? MEAL.grumpyWalk : 1;
+      // hirelings (NOTES-42-hirelings): Fíli's stair, walked faster.
+      p.mealK = (s.grumpy ? MEAL.grumpyWalk : 1) * (this.shire.hirelings?.walkMult(p) ?? 1);
     });
   }
 

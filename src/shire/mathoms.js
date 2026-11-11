@@ -118,7 +118,9 @@ export class Mathoms {
     if (!force && this.rolled === day) return null;
     this.rolled = day;
     const L = this.level();
-    if (!force && (L < 1 || Math.random() > REP.buyerChance[L])) return null;
+    // party (NOTES-39-party): Bilbo's presents raise the daily chance, also before the first reputation level.
+    const bonus = this.shire.party?.buyerBonus?.() || 0;
+    if (!force && ((L < 1 && bonus <= 0) || Math.random() > REP.buyerChance[L] + bonus)) return null;
     const top = this.deepestLayer();
     const kinds = FIND_TYPES.filter((f) => f.layer >= 0 && f.layer <= top && f.weight > 0 && f.value > 0 && !f.famous && !f.keep);
     if (!kinds.length) return null;

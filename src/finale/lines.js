@@ -7,7 +7,7 @@
    differently. ==== */
 
 export const LINES = {
-  wake: 'Szmaug felébredt! Menekülj felfelé: a hordólift, a létrák, Gandalf rakétája és a Sasok is kivisznek!',
+  wake: 'Szmaug felébredt! Menekülj felfelé: a hordólift, a létrák és a Sasok is kivisznek!',
   wakeBanner: 'Szmaug felébredt!',
   chase: (m) => `Szmaug a nyomodban: ${m} m`,
   chaseClose: 'Szmaug utolér! Ne állj meg!',

@@ -101,7 +101,7 @@ export class Goblin {
     const d = this.pos.distanceTo(p.pos);
     const light = this.mgr.lightPower(p);
     const noisy = this.mgr.noiseT[p.slot] > 0;
-    const hear = p.ch.id === 'bilbo' ? GOBLIN.noiseBilbo : GOBLIN.noise;
+    const hear = (p.ch.id === 'bilbo' ? GOBLIN.noiseBilbo : GOBLIN.noise) * (p.xpK?.hear ?? 1); // NOTES-41-xp: Lopakodás
     if (noisy && d < hear) return true;
     const sight = light >= 2 ? GOBLIN.sightBright : GOBLIN.sight;
     if (d > sight) return false;

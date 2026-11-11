@@ -87,7 +87,9 @@ export class Combat {
     let power = sting ? COMBAT.power.sting : COMBAT.power.pick;
     // Thorin strikes harder (TERV 0.4; Orcrist comes later).
     if (p.ch.id === 'thorin') power *= 1.4;
+    power *= p.xpK?.pick ?? 1; // NOTES-41-xp: Thorin's Harci tapasztalat
     g.hit(p.pos.x, p.pos.z, power, sting ? 'sting' : 'pick');
+    this.game.xp?.foe(p, g); // NOTES-41-xp
     if (sting) this.mgr.sting.stab(p);
     p.kick = 0.7;
     this.mgr.sound(sting ? 'sting' : 'thwack', g.pos);
@@ -105,15 +107,15 @@ export class Combat {
     const s = this.stones.find((x) => !x.live);
     if (!s) return;
     p.stones = (p.stones ?? COMBAT.stonesMax) - 1;
-    p.stoneCd = COMBAT.stoneCooldown;
+    p.stoneCd = COMBAT.stoneCooldown * (p.xpK?.stoneCd ?? 1); // NOTES-41-xp: Bilbo's Kődobás (also speed and power)
     const bilbo = p.ch.id === 'bilbo';
     p.eye(s.pos);
     p.forward(tmpV);
     s.pos.addScaledVector(tmpV, 0.35);
     s.pos.y -= 0.12;
-    s.vel.copy(tmpV).multiplyScalar(COMBAT.stoneSpeed * (bilbo ? 1.25 : 1)).add(tmpW.set(p.vel.x * 0.5, 1.2, p.vel.z * 0.5));
+    s.vel.copy(tmpV).multiplyScalar(COMBAT.stoneSpeed * (bilbo ? 1.25 : 1) * (p.xpK?.stoneSpeed ?? 1)).add(tmpW.set(p.vel.x * 0.5, 1.2, p.vel.z * 0.5));
     s.by = p;
-    s.power = COMBAT.power.stone * (bilbo ? 1.6 : 1);
+    s.power = COMBAT.power.stone * (bilbo ? 1.6 : 1) * (p.xpK?.stonePower ?? 1);
     s.live = 4;
     s.rest = 0;
     p.swing = Math.max(p.swing, 0.6);
@@ -137,7 +139,7 @@ export class Combat {
   shootArrow(p) {
     const a = this.arrows.find((x) => !x.live);
     if (!a) return;
-    p.abilityCd = COMBAT.arrowCooldown;
+    p.abilityCd = COMBAT.arrowCooldown * (p.xpK?.arrowCd ?? 1); // NOTES-41-xp: Kíli's Íjászat
     p.eye(a.pos);
     p.forward(tmpV);
     a.pos.addScaledVector(tmpV, 0.4);
@@ -152,7 +154,7 @@ export class Combat {
 
   charge(p) {
     if (!p.grounded) return;
-    p.abilityCd = COMBAT.chargeCooldown;
+    p.abilityCd = COMBAT.chargeCooldown * (p.xpK?.chargeCd ?? 1); // NOTES-41-xp: Bombur's Roham
     p.dashT = COMBAT.chargeTime;
     p.dashSpeed = COMBAT.chargeSpeed;
     p.say('Bombur rohan!', 1.5);
@@ -176,6 +178,7 @@ export class Combat {
           const ahead = dx * tmpV.x + dz * tmpV.z;
           if (ahead > -0.2 && ahead < 1.2 && Math.hypot(dx, dz) < 1.25 && Math.abs(g.pos.y - p.pos.y) < 1.3) {
             g.hit(p.pos.x, p.pos.z, COMBAT.power.charge, 'charge');
+            this.game.xp?.foe(p, g); // NOTES-41-xp
             if (g.body?.pose) g.body.pose.tumble = 1.2;
             mgr.sound('thwack', g.pos);
           }
@@ -204,6 +207,7 @@ export class Combat {
           const g = mgr.goblinNear(s.pos, 0.42);
           if (g) {
             g.hit(s.pos.x - s.vel.x, s.pos.z - s.vel.z, s.power, 'stone');
+            this.game.xp?.foe(s.by, g); // NOTES-41-xp
             mgr.sound('clonk', s.pos);
             if (s.by) mgr.hinted(s.by, 'stone-hit');
             s.vel.multiplyScalar(-0.2);
@@ -251,6 +255,7 @@ export class Combat {
           const g = mgr.goblinNear(a.pos, 0.4);
           if (g) {
             g.hit(a.pos.x - a.vel.x, a.pos.z - a.vel.z, COMBAT.power.arrow, 'arrow');
+            this.game.xp?.foe(a.by, g); // NOTES-41-xp
             mgr.sound('clonk', a.pos);
             a.live = 0;
             break;

@@ -101,7 +101,7 @@ export class Spider {
     if (!this.mgr.canTarget(p)) return false;
     const d = this.pos.distanceTo(p.pos);
     const noisy = this.game.enemies?.noiseT?.[p.slot] > 0;
-    if (noisy && d < (p.ch.id === 'bilbo' ? SPIDER.noiseBilbo : SPIDER.noise)) return true;
+    if (noisy && d < (p.ch.id === 'bilbo' ? SPIDER.noiseBilbo : SPIDER.noise) * (p.xpK?.hear ?? 1)) return true; // NOTES-41-xp: Lopakodás
     const sight = p.depth > 1 ? SPIDER.sightLamp : SPIDER.sight;
     if (d > sight) return false;
     this.centre(tmp).y += 0.25;

@@ -68,8 +68,9 @@ export class Lamp {
       p.lampAid = aid;
       p.digBlocked = hold;
       const L = hold ? LAMP.holder : aid ? LAMP.digger : null;
-      p.lampBoost = L ? L.boost : 1;
-      p.lampReach = L ? L.reach : 1;
+      // smith (NOTES-40-smith): the smith's lamp upgrade multiplies in (`p.smithLamp`, null without it).
+      p.lampBoost = (L ? L.boost : 1) * (p.smithLamp?.boost || 1);
+      p.lampReach = (L ? L.reach : 1) * (p.smithLamp?.reach || 1);
       p.lampLift = hold ? LAMP.holder.lift : 0;
       // The strong light (enemies/, gollum/, mirkwood-foes/ read p.lightPower): one step up while it lasts.
       const strong = hold || aid;

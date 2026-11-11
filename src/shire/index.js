@@ -5,6 +5,15 @@
  * `state()` in the save (game.js merges it into the snapshot as `shire`).
  * Read by: hud.js (priceMult, sellMult, buyerMult, buyerNote; p.mealClock), player.js (digMult, p.mealK),
  * home-events/index.js (onBirthday, isMathom for the gift choice).
+ * party/ (NOTES-39-party): Bilbo's birthday party on the Party Field is owned here (`this.party`, also `game.party`): its
+ * input comes first in input(), its update first in update(), its stages ride in the save as the optional `p`, and its
+ * stages' price / buying factors multiply into priceMult / sellMult.
+ * smith/ (NOTES-40-smith): the travelling dwarf smith's endless upgrades are owned here too (`this.smith`, also
+ * `game.smith`): its input after the party's, its update after the party's, its levels ride in the save as the optional
+ * `k`, and its swing-time factor multiplies into digMult.
+ * hirelings/ (NOTES-42-hirelings): the hired dwarves of Thorin's company are owned here too (`this.hirelings`, also
+ * `game.hirelings`): their menu's input after the smith's, their update after the smith's (it also runs on a bench page
+ * for `?hire=1`), their state rides in the save as the optional `h`; Fíli's stair speeds walking through meals.js mealK.
  * Cost: meals every frame (a few comparisons per player); the garden, the acorn, the prompts every 0.25 s; meshes are
  * built once and only shown / scaled. Off on bench pages unless `force` (QA). */
 import * as THREE from 'three';
@@ -13,6 +22,9 @@ import { FIND_TYPES } from '../finds.js';
 import { BED_D, BED_SLOTS, BED_W, buildBeds } from '../surface/beds.js';
 import { buildNeighbour } from '../surface/neighbour.js';
 import { deviceOf, glyphs } from '../ui/glyphs.js';
+import { Party } from '../party/index.js';
+import { Smith } from '../smith/index.js';
+import { Hirelings } from '../hirelings/index.js';
 import { isMathom, Mathoms } from './mathoms.js';
 import { Meals } from './meals.js';
 
@@ -53,6 +65,15 @@ export class Shire {
     this.beds3d = root ? buildBeds(root, this.mat) : null;
     this.neighbour = root ? buildNeighbour(root, this.mat) : null;
     this.syncBeds(true);
+    // party (NOTES-39-party): after the material (its figures share it).
+    this.party = new Party(this);
+    game.party = this.party;
+    // smith (NOTES-40-smith): after the material (the forge shares it).
+    this.smith = new Smith(this);
+    game.smith = this.smith;
+    // hirelings (NOTES-42-hirelings): after the material (the stair's treads and the figures share it).
+    this.hirelings = new Hirelings(this);
+    game.hirelings = this.hirelings;
   }
 
   get enabled() {
@@ -66,11 +87,11 @@ export class Shire {
   /* ---------------- read by other modules ---------------- */
 
   priceMult() {
-    return this.enabled ? this.mathoms.priceMult() : 1;
+    return this.enabled ? this.mathoms.priceMult() * this.party.priceMult() : 1;
   }
 
   sellMult() {
-    return this.enabled ? this.mathoms.sellMult() : 1;
+    return this.enabled ? this.mathoms.sellMult() * this.party.sellMult() : 1;
   }
 
   buyerMult(f) {
@@ -82,7 +103,7 @@ export class Shire {
   }
 
   digMult(p) {
-    return this.meals.digMult(p);
+    return this.meals.digMult(p) * this.smith.swingMult(p); // smith (NOTES-40-smith): the new handle's swing time
   }
 
   onBirthday(gifts) {
@@ -245,6 +266,9 @@ export class Shire {
 
   /** Per player in the chain: the neighbour's menu (held), the use key at him or at a bed. True = this player is held. */
   input(p, i, it) {
+    if (this.party.input(p, i, it)) return true; // party (NOTES-39-party): the scene, the signboard's menu
+    if (this.smith.input(p, i, it)) return true; // smith (NOTES-40-smith): the forge's menu
+    if (this.hirelings.input(p, i, it)) return true; // hirelings (NOTES-42-hirelings): the hiring menu
     if (!this.enabled) return false;
     const m = this.menu.get(p);
     if (m) {
@@ -343,6 +367,9 @@ export class Shire {
   }
 
   update(dt) {
+    this.party.update(dt); // party (NOTES-39-party)
+    this.smith.update(dt); // smith (NOTES-40-smith)
+    this.hirelings.update(dt); // hirelings (NOTES-42-hirelings)
     if (!this.enabled) {
       if (!this.wasOff) {
         this.wasOff = true;
@@ -384,6 +411,12 @@ export class Shire {
     const out = { m: this.mathoms.state(), e: this.meals.state(), u: this.unlocked };
     if (this.beds.some((b) => b.crop)) out.g = this.beds.map((b) => (b.crop ? [b.crop, Math.round(b.at), b.left] : 0));
     if (this.acornAt != null) out.a = Math.round(this.acornAt);
+    const party = this.party.state(); // party (NOTES-39-party): optional
+    if (party) out.p = party;
+    const smith = this.smith.state(); // smith (NOTES-40-smith): optional
+    if (smith) out.k = smith;
+    const hire = this.hirelings.state(); // hirelings (NOTES-42-hirelings): optional
+    if (hire) out.h = hire;
     return out;
   }
 
@@ -398,5 +431,8 @@ export class Shire {
     this.acornAt = s?.a ?? null;
     this.menu.clear();
     this.syncBeds(true);
+    this.party.restore(s?.p); // party (NOTES-39-party)
+    this.smith.restore(s?.k); // smith (NOTES-40-smith)
+    this.hirelings.restore(s?.h); // hirelings (NOTES-42-hirelings)
   }
 }

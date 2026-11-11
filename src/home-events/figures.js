@@ -166,6 +166,16 @@ function dwarfParts(P, d, m) {
 }
 
 /**
+ * One plain dwarf (no named member: the caller gives the colours, e.g. the travelling smith of src/smith, NOTES-40-smith);
+ * local: faces +z, feet at 0. `d`: { hood, beard, wide?, tall? } as DWARF_ARRIVALS.
+ */
+export function dwarfGeometry(d) {
+  const P = new Parts();
+  dwarfParts(P, d, new THREE.Matrix4());
+  return P.merge();
+}
+
+/**
  * The thirteen as one geometry, in arrival order; `counts[k]` = the index count that draws the first k dwarves, so a
  * scene shows them one group after another with setDrawRange (still one draw call).
  * @param {Array<[number, number, number]>} spots local [x, z, yaw] per dwarf (arrival order)

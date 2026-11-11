@@ -3,8 +3,8 @@
    ellopni egy ezüstkanalat"; 0.7 "Váratlan vendégek"; 0.11/12 the plate throwing; 0.11/13 the birthday gifts).
    NOTES-14-bagend-events.
    - Gandalf drops in (book ch. 1: he knocks with his staff, blows smoke rings; TERV 0.3 "betoppan, tanácsot ad,
-     tűzijátékot hoz"): comfort ≥ 30, by day, at most every 3rd game day. Gift: one of his firework rockets per player
-     at home (exits.js `p.rockets`), and a hint for the deepest layer reached. Once the house is ready for the party
+     tűzijátékot hoz"): comfort ≥ 30, by day, at most every 3rd game day. Gift: one of his firework charges per player
+     at home (exits.js `p.rockets`; NOTES-37-blast-eagles: the old rocket is now a blasting charge), and a hint for the deepest layer reached. Once the house is ready for the party
      (comfort ≥ 90) he scratches his sign on the round door: the dwarves come on a later day.
    - The Unexpected Party (book ch. 1, TERV 0.7): one-off, comfort ≥ 90, after Gandalf's sign, from tea-time to the
      evening (16:00–21:00). The thirteen arrive group by group, then Gandalf; they eat the pantry bare (free food at
@@ -399,8 +399,8 @@ export class HomeEvents {
     const home = this.game.players.filter((p, i) => this.free(p, i));
     const room = home.some((p) => (p.rockets || 0) < ROCKET_MAX);
     return room
-      ? `Az ajándék: egy tűzijáték-rakéta a híres tűzijátékaiból (${home.length > 1 ? 'mindkettőtöknek' : 'neked'}). Ha bajban vagy a gödörben, egy rakéta kirepít.`
-      : 'Rakétát hozott volna, de már tele a zsebed velük. Helyette tanácsot ad.';
+      ? `Az ajándék: egy tűzijáték-töltet a híres tűzijátékaiból (${home.length > 1 ? 'mindkettőtöknek' : 'neked'}). A gödörben guggolva teszed le és gyújtod meg: utat robbant a földben és a kőben.`
+      : 'Töltetet hozott volna, de már tele a zsebed velük. Helyette tanácsot ad.';
   }
 
   /** The hint for the deepest layer anybody reached. */
@@ -424,7 +424,7 @@ export class HomeEvents {
         n++;
       }
     }
-    const msg = n ? 'Gandalf rakétát hagyott nálad: a gödörben a kijutás gombjával gyújthatod meg.' : 'Gandalf továbbállt.';
+    const msg = n ? 'Gandalf tűzijáték-töltetet hagyott nálad: a gödörben guggolva, a kijutás gombjával gyújthatod meg.' : 'Gandalf továbbállt.';
     for (const p of S.viewers) p.say(S.skipped ? `Gandalf járt itt. ${msg}` : msg, 4);
   }
 

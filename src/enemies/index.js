@@ -16,6 +16,9 @@ import { chunkKey, floorBelow, GoblinSites } from './sites.js';
 import { Sting } from './sting.js';
 import { Trolls } from '../trolls/index.js'; // trolls (NOTES-24-trolls)
 
+/** NOTES-37-blast-eagles: goblins this far (m) from Gandalf's charge hear it go off. */
+const BLAST_HEAR = 30;
+
 /**
  * Goblin night (TERV 0.11/5): the warning and the break-out of one wave. When and where a raid comes is decided by
  * timed/goblin-night.js on the day clock (NOTES-12-events): every few game days at dusk, once Goblin-town was reached.
@@ -241,6 +244,56 @@ export class Enemies {
   dug(p) {
     p.stones = Math.min(COMBAT.stonesMax, (p.stones ?? COMBAT.stonesMax) + 1);
     this.trolls.dug(p); // trolls (NOTES-24-trolls): digging in the dark in the troll cave is heard
+  }
+
+  /**
+   * NOTES-37-blast-eagles: Gandalf's charge went off at `pos` (exits.js blast), lit by player `by`. Goblins within
+   * BLAST_HEAR m that are not busy rush at the nearest player they may go after (the one who lit it first), or go to look
+   * at the blast when nobody is there; in and around the troll cave the nearest stone troll wakes at once (no warning:
+   * the blast is louder than any digging), unless Gandalf's "Hajnal!" or the dawn still keeps them stone (`calmT`) or the
+   * page is a quiet bench page. Returns what woke (QA).
+   */
+  blast(pos, by) {
+    let goblins = 0;
+    for (const g of this.list) {
+      if (g.state !== 'patrol' || g.pos.distanceTo(pos) > BLAST_HEAR) continue;
+      let target = this.canTarget(by) && by.pos.distanceTo(g.pos) < BLAST_HEAR + 10 ? by : null;
+      if (!target) {
+        let bd = BLAST_HEAR + 10;
+        for (const p of this.game.players) {
+          const d = this.canTarget(p) ? p.pos.distanceTo(g.pos) : Infinity;
+          if (d < bd) {
+            bd = d;
+            target = p;
+          }
+        }
+      }
+      if (target) {
+        g.target = target;
+        g.set('alert');
+        g.screech = 0.6;
+        this.sound('screech', g.pos);
+      } else {
+        g.way = pos.clone();
+        g.t = 0;
+      }
+      goblins++;
+    }
+    let troll = null;
+    const tr = this.trolls;
+    if (tr && !tr.quiet && tr.list.length && tr.calmT <= 0 && tr.inCave(pos, 6)) {
+      const near = tr.near();
+      const target = near.includes(by) ? by : near[0];
+      const t = target && tr.nearestStone(pos);
+      if (t) {
+        tr.wake(t, target);
+        tr.stage = 'stir';
+        tr.stirT = Math.max(tr.stirT || 0, 6);
+        tr.stirE = Math.max(tr.stirE || 0, 1.2);
+        troll = t.name;
+      }
+    }
+    return { goblins, troll };
   }
 
   /** Counter rows for the Green Dragon (hud.js). */

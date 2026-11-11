@@ -286,7 +286,11 @@ export class Trolls {
   /** Gandalf's voice: "Hajnal!" (the upgrade, the use key in the cave). */
   callDawn(p) {
     const any = this.anyAwake || this.stage === 'stir';
-    for (const t of this.list) if (t.awake) this.toStone(t);
+    for (const t of this.list) {
+      if (!t.awake) continue;
+      this.toStone(t);
+      this.game.xp?.troll(p); // NOTES-41-xp: experience for each troll turned to stone
+    }
     this.stage = null;
     this.noise = 0;
     this.calmT = TROLL.dawnCalm;
@@ -417,6 +421,7 @@ export class Trolls {
       if (p.choosing || p.dead > 0 || this.lightOf(p) < TROLL.light || !this.inCave(p.pos, TROLL.zone + 2)) continue;
       if (Math.hypot(p.pos.x - t.pos.x, p.pos.z - t.pos.z) < TROLL.freezeNear) {
         this.toStone(t);
+        this.game.xp?.troll(p); // NOTES-41-xp: the player whose strong light froze it
         for (const q of this.near()) q.say(L.lightFreeze(t.name), 3.5);
         return;
       }
