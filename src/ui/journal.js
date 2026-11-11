@@ -340,11 +340,15 @@ export class Journal {
     // NOTES-46-stations: the main stations visited ride here too, as the optional `stations` list of ids (stations.js
     // state(); absent when none was visited, and a save without it starts with none visited).
     const stations = this.game.stations ? this.game.stations.state() : this.stationsSave;
-    if (!this.marks.size && !this.seen.size && !finders && !stations?.length) return undefined;
+    // NOTES-47-station-uses: today's station uses ride here as the optional `stationUses` ({ key: day }; station-uses
+    // state(); absent when nothing was used today, and a save without it = nothing used today).
+    const uses = this.game.stationUses ? this.game.stationUses.state() : this.stationUsesSave;
+    if (!this.marks.size && !this.seen.size && !finders && !stations?.length && !uses) return undefined;
     const out = { marks: [...this.marks] };
     if (this.seen.size) out.seen = [...this.seen]; // NOTES-31-handbook (optional field)
     if (finders) out.finders = finders;
     if (stations?.length) out.stations = stations;
+    if (uses) out.stationUses = uses;
     return out;
   }
 
@@ -353,6 +357,8 @@ export class Journal {
     if (s?.finders && typeof s.finders === 'object') this.findersSave = s.finders;
     // NOTES-46-stations: kept for stations.js (created with the first HUD update: stationsOf reads it).
     if (Array.isArray(s?.stations) && s.stations.length) this.stationsSave = s.stations.filter((id) => typeof id === 'string');
+    // NOTES-47-station-uses: kept for station-uses/index.js (created on its first frame: stationUsesOf reads it).
+    if (s?.stationUses && typeof s.stationUses === 'object' && !Array.isArray(s.stationUses)) this.stationUsesSave = s.stationUses;
     for (const m of s?.marks || []) this.marks.add(m);
     for (const id of s?.seen || []) if (typeof id === 'string') this.seen.add(id);
   }

@@ -21,7 +21,8 @@
      wall tapping, Balin's map, the lamp shimmer, Bilbo's party, the dwarf smith, XP and skills, the hired dwarves, the
      action wheel, the pickup filter, the world's edge), a seventh chapter "Hősök és képességek", and the key tables
      brought in step with input.js (wheel 2 / 9 / LB, tap 1 / Ö / LB + RS).
-   - NOTES-46-stations: the main-station guide's entry (Hősök › A gödörben), its stations per reached layer. ==== */
+   - NOTES-46-stations: the main-station guide's entry (Hősök › A gödörben), its stations per reached layer.
+   - NOTES-47-station-uses: "Mit adnak a fő állomások?" (Hősök › A gödörben): each station's use, reached layers only. ==== */
 import { BAG_TIERS, COOP, FINDERS, HUNGER, LADDER_LEN, SHOP, TOOL_TIERS } from '../config.js';
 import { CHARGE, EAGLE_MAX, EAGLE_PRICE, ROCKET_MAX, ROCKET_PRICE } from '../exits.js';
 import { EDGE, EDGE_LINES } from '../edge.js';
@@ -36,6 +37,7 @@ import { MAX_RANK, SKILLS, XP_GAIN } from '../xp/config.js';
 import { levelStart } from '../xp/index.js';
 import { LIFT_STOPS } from '../lift.js';
 import { STATIONS } from '../stations.js';
+import { EXISTING as STATION_EXISTING, USES as STATION_USES } from '../station-uses/index.js';
 import { LAYER_NAMES, LAYER_TOPS } from '../materials.js';
 import { ARMOUR_SHOP_MAX, ARMOUR_TIERS } from '../enemies/armour.js';
 import { COMBAT } from '../enemies/combat.js';
@@ -316,6 +318,7 @@ function shopEntries(add, game, S) {
     title: 'Létrák',
     meta: `${SHOP.ladderPack} darab · ${SHOP.ladderPrice} arany`,
     body: p(`Egy létra ${LADDER_LEN} m hosszú: a falhoz támasztod (létra gomb), és felmászol rajta. Mászni fárasztóbb, mint járni: ${num(HUNGER.perClimbSecond, 1)} pont fogy a tányérról másodpercenként.`)
+      + p('Lefelé a lefelé mászás gombjával mászol (Shift / C, a 2. játékos jobb Ctrl / ., kontrolleren LB nyomva tartva). Egy létra tetején állva ugyanezzel a gombbal lépsz rá a létrára fentről, és indulsz lefelé; ilyenkor az előre gomb a létra tetején megállít, nem lép le a mélybe. Ha zuhanás közben létra mellett esel el, elkapod.')
       + p(`Induláskor ${SHOP.startLadders} létrád van; a pultnál ${SHOP.ladderPack} darab ${gold(SHOP.ladderPrice)}.`),
   }));
   add(C, 'Kellékek', true, () => ({
@@ -618,6 +621,24 @@ function heroEntries(add, S) {
       + p('Amint valamelyikőtök belép egy ilyen helyre, az megjártnak számít (a játék el is menti), és a tábla a következőre mutat; ha a réteg minden fő helyszínén jártatok, eltűnik. Ketten játszva mindenkinek saját táblája van, a saját rétegén. A felszínen, Zsáklakban, menükben és jelenetekben nincs tábla. A Beállításokban kapcsolhatod ki (Fő állomások jelzője); ezt a gép jegyzi meg, a mentéstől külön.')
       + p('A fő helyszínek rétegenként (csak ahová már leértetek):')
       + ul(STATIONS.map((list, l) => (S.reached(l) ? `${ROMAN[l]}. réteg: ${list.map((st) => (S.stations.has(st.id) ? `${st.name} <i>(megjártátok)</i>` : st.name)).join(', ')}` : LOCKED))),
+  }));
+  // NOTES-47-station-uses: what each main station gives (the new daily uses and the stations' own adventures, spoiler-free;
+  // only the layers someone has reached are listed).
+  add(C, 'A gödörben', true, () => ({
+    title: 'Mit adnak a fő állomások?',
+    meta: 'használat gomb a helyszínen · naponta egyszer',
+    body: p('Minden fő helyszínen van mit tenni. Ahol a képernyő közepe alatt feltűnik egy sor a használat gombbal, ott naponta egyszer (a Megye napja hajnalban fordul) kapsz valamit: ételt, Gandalf tűzijáték-töltetét vagy egy leletet. Ha már megvolt aznap, a sor azt mutatja: „ma már megvolt (holnap újra)”.')
+      + p('Az étel és a töltet mindenkinek jár (ketten játszva mindkettőtöknek), a leletek a társaságnak naponta egyszer. A lelet a zsákba kerül, ha van benne hely és a felvételi szűrőd engedi; ha nem, ott marad, és a nap még nem számít elhasználtnak. Töltetet csak az kap, akinek nincs tele a zsebe. A kamra étele étkezésnek számít a Megye étkezési idejében; Kihívásban csak kétharmad tányér.')
+      + ul(STATIONS.map((list, l) => {
+        if (!S.reached(l)) return LOCKED;
+        const rows = list.map((st) => {
+          const u = STATION_USES.find((x) => x.station === st.id);
+          const fname = u?.find ? FIND_TYPES.find((t) => t.id === u.find)?.name : '';
+          const what = u ? u.short.replace('{f}', fname && S.found.has(u.find) ? `egy „${fname}”` : 'egy lelet') : STATION_EXISTING[st.id];
+          return what ? `${st.name}: ${what}` : `${st.name}: itt csak a hely maga vár (a lépcső teteje a kincstár felett)`;
+        });
+        return `<b>${ROMAN[l]}. réteg</b><br>${rows.join('<br>')}`;
+      })),
   }));
   // NOTES-44-pickup-edge: the world's edge (on Thrór's map from the start, the fence round the meadow).
   const side = Math.round(EDGE.x1 - EDGE.x0 + 1);
