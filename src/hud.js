@@ -1,14 +1,19 @@
 /* ==== hud.js — one HUD and one shop menu per player, positioned over that player's viewport (themed: TERV 0.12) ====
  * Every element is built once; update() only writes what changed since the last frame (no per-frame innerHTML). */
+import * as THREE from 'three';
 import { BAG_TIERS, COOP, HUNGER, SHOP, TOOL_TIERS } from './config.js';
 import { LAYER_BOTTOM, LAYER_NAMES, LAYER_TOPS } from './materials.js';
 import { CHARACTERS } from './player.js';
+import { Finders, findersOf } from './finders.js'; // NOTES-38-finders
+import { BAG_END } from './surface/bagend.js';
 import { belayRopeSVG, coinsSVG, ladderSVG, MEALS, mealClockSVG, moonPhasePath, mugSVG, PLATE_C, plateSVG, sackSVG, todDialSVG, toolSVG, tornSackSVG, uid } from './ui/art.js';
 import { CounterMenu } from './ui/counter.js';
 import { deviceOf, glyphs } from './ui/glyphs.js';
 import { toRunes } from './ui/runes.js';
 import { SelectView } from './ui/select.js';
 import { bakeTextures } from './ui/textures.js';
+import { XpHud } from './xp/hud.js'; // NOTES-41-xp
+import { WheelView } from './wheel/view.js'; // NOTES-43-wheel
 
 const fmt = (n) => n.toLocaleString('hu-HU', { maximumFractionDigits: 1, minimumFractionDigits: 1 });
 
@@ -33,6 +38,57 @@ const QUICK = [
 ];
 
 bakeTextures();
+
+/* ---------------- the co-op partner indicator (NOTES-36-partner) ---------------- */
+
+/** Tuning of the partner indicator: fade distances (m), the head clearance of the pin (m), screen margins (em). */
+const PARTNER = { fadeNear: 2.5, fadeFar: 5.5, overHead: 0.3, edgeX: 4.4, edgeY: 3.9, pinTop: 3.6, ring: 2.9 };
+// Reused per frame: the partner's point, the inverse camera rotation (no allocation in the frame loop).
+const PT_V = new THREE.Vector3();
+const PT_Q = new THREE.Quaternion();
+/** The short name on the marker: the last word of the character's name ("Zsákos Bilbó" → "Bilbó"). */
+const shortName = (name) => (name || '').split(' ').pop();
+
+/** The indicator's styles, injected once (the HUD stylesheet stays untouched). */
+const PARTNER_CSS = `
+.pt { position: absolute; left: 0; top: 0; z-index: 3; pointer-events: none; will-change: transform, opacity; --ptc: #e8c070; }
+.pt.off { display: none; }
+.pt-lbl { position: absolute; left: 0; top: 0; display: flex; flex-direction: column; align-items: center; gap: 0.05em; white-space: nowrap;
+  padding: 0.18em 0.6em 0.22em; border-radius: 0.25em; background: var(--tx-wood) center / cover, #4a2e18; color: #f6e8c4;
+  border-top: 0.22em solid var(--ptc); box-shadow: 0 0.12em 0.4em #000b, inset 0 0 0 1px #0008; text-shadow: 0 1px 2px #000;
+  font-family: var(--f-head); line-height: 1.05; }
+.pt-nm { font-weight: normal; font-size: 0.9em; color: var(--ptc); }
+.pt-row { display: flex; gap: 0.45em; font-size: 0.78em; }
+.pt-z:empty { display: none; }
+.pt-z { color: #ffe0a0; }
+.pt-pin { position: absolute; left: -0.55em; top: -1.1em; width: 1.1em; height: 1.1em; }
+.pt-pin svg, .pt-arr svg { width: 100%; height: 100%; display: block; overflow: visible; }
+.pt-arr { position: absolute; left: 0; top: 0; width: 1.3em; height: 1.3em; margin: -0.65em 0 0 -0.65em; display: none; }
+.pt-arr-in { width: 100%; height: 100%; }
+.pt.pin .pt-lbl { transform: translate(-50%, calc(-100% - 1.3em)); }
+.pt.edge .pt-lbl { transform: translate(-50%, -50%); }
+.pt.edge .pt-pin { display: none; }
+.pt.edge .pt-arr { display: block; }
+.pt.edge.noarr .pt-arr { display: none; }
+body:has(#screens .scr.on) .pt { visibility: hidden; }
+`;
+let partnerCss = false;
+
+/* ---------------- the wall tap's echo ring (NOTES-38-finders) ---------------- */
+
+/** The ring round the crosshair after a tap: an arrow towards the hollow, the rough distance, up / down. */
+const TAP_CSS = `
+.tp { position: absolute; left: 50%; top: 50%; width: 7.2em; height: 7.2em; margin: -3.6em 0 0 -3.6em; z-index: 3; pointer-events: none; }
+.tp.off { display: none; }
+.tp-ring { position: absolute; inset: 0; border-radius: 50%; border: 0.14em dashed #f3e2b0cc; box-shadow: 0 0 0.6em #0008, inset 0 0 0.6em #0006; }
+.tp-rot { position: absolute; inset: 0; }
+.tp-arr { position: absolute; left: 50%; top: -0.75em; width: 1.5em; height: 1.5em; margin-left: -0.75em; }
+.tp-arr svg { width: 100%; height: 100%; display: block; overflow: visible; }
+.tp-tx { position: absolute; left: 50%; top: calc(100% + 0.3em); transform: translateX(-50%); white-space: nowrap; font-family: var(--f-head);
+  font-size: 0.85em; color: #f6e8c4; text-shadow: 0 1px 2px #000, 0 0 0.4em #000; }
+body:has(#screens .scr.on) .tp { visibility: hidden; }
+`;
+let tapCss = false;
 
 export class Hud {
   constructor(root, player, interactKey = 'X / E') {
@@ -65,6 +121,10 @@ export class Hud {
       </div>
       <div class="dpad">${QUICK.map((q) => `<div class="qa ${q.dir}"><div class="qa-art"></div><div class="qa-txt"><span class="qa-l">${q.label}</span><span class="qa-k"></span></div>${q.count ? '<b class="qa-n"></b>' : ''}</div>`).join('')}<div class="dpad-hub"></div></div>
       <div class="cross"><i></i></div>
+      <div class="pt off"><div class="pt-arr"><div class="pt-arr-in"><svg viewBox="-10 -10 20 20" aria-hidden="true"><path d="M9 0L-6 -7.5L-2.5 0L-6 7.5Z" fill="var(--ptc)" stroke="#1a1008" stroke-width="1.6" stroke-linejoin="round"/></svg></div></div>
+        <div class="pt-pin"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 19L2.5 7.5A7.5 7.5 0 1 1 17.5 7.5Z" fill="var(--ptc)" stroke="#1a1008" stroke-width="1.6" stroke-linejoin="round"/><circle cx="10" cy="7.2" r="2.6" fill="#1a1008"/></svg></div>
+        <div class="pt-lbl"><b class="pt-nm"></b><span class="pt-row"><span class="pt-d"></span><span class="pt-z"></span></span></div></div>
+      <div class="tp off"><div class="tp-ring"></div><div class="tp-rot"><div class="tp-arr"><svg viewBox="-10 -10 20 20" aria-hidden="true"><path d="M0 -9L7.5 6L0 2.5L-7.5 6Z" fill="#e8c070" stroke="#1a1008" stroke-width="1.6" stroke-linejoin="round"/></svg></div></div><div class="tp-tx"></div></div>
       <div class="prompt"></div>
       <div class="msgs"></div>
       <div class="banner"></div>
@@ -95,12 +155,49 @@ export class Hud {
     this.selectView = new SelectView(this.r.select);
     this.msgEls = new Map();
     this.c = {}; // last written values, per key
+    // NOTES-36-partner: the co-op partner indicator's elements, the view size (from place(), never read from the DOM)
+    // and the last computed state (QA reads it).
+    if (!partnerCss) {
+      partnerCss = true;
+      const st = document.createElement('style');
+      st.id = 'partner-css';
+      st.textContent = PARTNER_CSS;
+      document.head.appendChild(st);
+    }
+    // NOTES-38-finders: the tap's echo ring, and the counter's Balin's-map layer pick (left / right on that row).
+    if (!tapCss) {
+      tapCss = true;
+      const st = document.createElement('style');
+      st.id = 'finders-css';
+      st.textContent = TAP_CSS;
+      document.head.appendChild(st);
+    }
+    this.r.tp = this.q('.tp');
+    this.r.tpRot = this.q('.tp-rot');
+    this.r.tpTx = this.q('.tp-tx');
+    this.mapPick = -1;
+    const pt = this.q('.pt');
+    this.r.pt = pt;
+    this.r.ptArr = pt.querySelector('.pt-arr-in');
+    this.r.ptNm = pt.querySelector('.pt-nm');
+    this.r.ptD = pt.querySelector('.pt-d');
+    this.r.ptZ = pt.querySelector('.pt-z');
+    this.vw = 0;
+    this.vh = 0;
+    this.fs = 16;
+    this.pt = { mode: 'off', x: 0, y: 0, ang: 0, dist: 0, dz: 0, opacity: 0 };
+    // NOTES-41-xp: the level plaque under the name plate and the level-up notice.
+    this.xpHud = new XpHud(this.q('.hud-in'), this.r.nm.parentElement);
     this.lastBag = 0;
     this.deepest = -1; // deepest layer index reached (for the layer banner)
   }
 
   place(x, y, w, h) {
     Object.assign(this.el.style, { left: `${x}px`, top: `${y}px`, width: `${w}px`, height: `${h}px` });
+    // NOTES-36-partner: the view size for the partner marker, and .hud-in's font size (ui.css: clamp(12px, 2.35cqmin, 20px)).
+    this.vw = w;
+    this.vh = h;
+    this.fs = Math.min(20, Math.max(12, 0.0235 * Math.min(w, h)));
   }
 
   remove() {
@@ -140,7 +237,7 @@ export class Hud {
     // shire (NOTES-26-shire): the reputation's better prices and buying, the new buyer's find kind.
     const sh = game.shire;
     const value = Math.round(p.bag.reduce((s, f) => s + f.value * (sh?.buyerMult(f) ?? 1), 0) * p.perk.sell * (coop ? COOP.sell : 1) * (game.bagEnd?.effects.mathomSellBonus ?? 1) * econ.sell * (sh?.sellMult() ?? 1));
-    const cost = (n) => Math.round(n * p.perk.price * (coop ? COOP.price : 1) * (sh?.priceMult() ?? 1));
+    const cost = (n) => this.cost(game, n);
     const hungerMax = game.bagEnd?.effects.hungerMax ?? HUNGER.max;
     const nextTool = TOOL_TIERS[p.toolTier + 1];
     const nextBag = BAG_TIERS[p.bagTier + 1];
@@ -172,8 +269,21 @@ export class Hud {
       ...(game.exits?.shopRows(p, cost) || []),
       ...(game.enemies?.shopRows(p, cost) || []),
       ...(game.safety?.shopRows(p, cost) || []), // safety (NOTES-11-safety): Balin's estimate
+      ...findersOf(game).shopRows(p, cost, this), // NOTES-38-finders: Balin's layer map, the lamp shimmer
       ...(game.modes?.shopRows(p, cost) || []), // modes (NOTES-15-modes): the hired dwarf (single play)
     ].filter(Boolean);
+  }
+
+  /** A counter price for this player: his perk, co-op and the Shire's reputation (NOTES-43-wheel shows it too). */
+  cost(game, n) {
+    const p = this.player;
+    const coop = game.players.length > 1;
+    return Math.round(n * p.perk.price * (coop ? COOP.price : 1) * (game.shire?.priceMult() ?? 1));
+  }
+
+  /** NOTES-43-wheel: this player's action wheel, built the first time it opens (src/wheel/view.js). */
+  wheelView() {
+    return (this.wheel ||= new WheelView(this.q('.hud-in')));
   }
 
   /** Handles the shop menu input; returns true while the menu is open. */
@@ -192,6 +302,8 @@ export class Hud {
     }
     if (it.upPressed) this.sel = (this.sel + rows.length - 1) % rows.length;
     if (it.downPressed) this.sel = (this.sel + 1) % rows.length;
+    // NOTES-38-finders: a row with a choice (Balin's map: which layer) takes left / right.
+    if ((it.leftPressed || it.rightPressed) && rows[this.sel]?.alt) rows[this.sel].alt(it.rightPressed ? 1 : -1);
     if (it.confirmPressed || it.digPressed) {
       const r = rows[this.sel];
       if (!r.ok) this.player.say('Most nincs rá szükség.');
@@ -322,6 +434,9 @@ export class Hud {
 
     this.updateMessages(p);
     this.updateDeath(p, game);
+    this.updatePartner(game, slot);
+    this.updateTap(game, slot);
+    this.xpHud.update(p, !!game.screens?.menuWas?.[slot]); // NOTES-41-xp
 
     // Shop.
     this.set('shopOpen', this.shopOpen, (v) => {
@@ -336,7 +451,139 @@ export class Hud {
     this.lastBag = p.bag.length;
   }
 
+  /**
+   * The co-op partner indicator (NOTES-36-partner): a pin over the partner's head with the short name, the distance
+   * and the height difference ("↓ 12 m": the partner is 12 m lower), drawn over the 3D view, so the soil never hides
+   * it. Off-screen or behind, an arrow on a ring round the label at the view's edge points the way. It fades out when
+   * the partner is close and in view. Off in single play, in Versengés, while this player is held by a menu or a
+   * scene (shop, contract, lift, minigames, the finale's scenes …; game.screens.menuWas, written just before this
+   * update), while either player chooses a character, and while this player lies fainted. The full-window screens
+   * (pause, map, settings …) freeze the game (no update): there a CSS rule hides it (any `#screens .scr.on`). Off
+   * under the title too (only where the screens run: bench pages have no title and do measure it).
+   * Per frame: one projection with reused objects (camera space by the inverse camera rotation, then the projection
+   * matrix's two scale terms); the DOM is written only when the rounded values change, positions by transform.
+   */
+  updatePartner(game, slot) {
+    const p = this.player;
+    const r = this.r;
+    const st = this.pt;
+    const q = game.players.length > 1 ? game.players[slot === 0 ? 1 : 0] : null;
+    const show = !!q && !game.modes?.versus && !p.choosing && !q.choosing && p.dead <= 0 && !game.screens?.menuWas?.[slot]
+      && !game.screens?.busy && !(game.screens?.titleUp && game.screens.enabled) && game.finale?.stage !== 'scene' && this.vw > 0;
+    if (!show) {
+      st.mode = 'off';
+      this.set('ptMode', 'off', () => (r.pt.className = 'pt off'));
+      return;
+    }
+    // Bag End's interior lies far off in the world (bagend/ INTERIOR_ORIGIN): a player inside counts as at the door.
+    const be = game.bagEnd;
+    const pIn = !!be?.isInside?.(p);
+    const qIn = !!be?.isInside?.(q);
+    const cam = p.camera;
+    const px = pIn ? BAG_END.x : p.pos.x;
+    const pz = pIn ? BAG_END.z : p.pos.z;
+    const py = pIn ? 0 : p.pos.y;
+    const qx = qIn ? BAG_END.x : q.pos.x;
+    const qz = qIn ? BAG_END.z : q.pos.z;
+    const qy = qIn ? 0 : q.pos.y;
+    const dist = pIn === qIn ? p.pos.distanceTo(q.pos) : Math.hypot(qx - px, qy - py, qz - pz);
+    const dz = py - qy; // > 0: the partner is lower
+    st.dist = dist;
+    st.dz = dz;
+    const away = qIn && !pIn;
+    if (this.c.ptCh !== q.ch || this.c.ptAway !== away) {
+      this.c.ptCh = q.ch;
+      this.c.ptAway = away;
+      r.ptNm.textContent = away ? `${shortName(q.ch?.name)} · Zsáklakban` : shortName(q.ch?.name);
+    }
+    this.set('ptC', q.ch?.color || '#e8c070', (v) => r.pt.style.setProperty('--ptc', v));
+    this.set('ptD', Math.round(dist), (v) => (r.ptD.textContent = `${v} m`));
+    const zr = Math.round(dz);
+    this.set('ptZ', zr, (v) => (r.ptZ.textContent = v > 0 ? `↓ ${v} m` : v < 0 ? `↑ ${-v} m` : ''));
+
+    const w = this.vw;
+    const h = this.vh;
+    const fs = this.fs;
+    let mode = 'edge';
+    let x;
+    let y;
+    let ang = 0;
+    let opacity = 1;
+    const noArr = pIn && !qIn;
+    if (noArr) {
+      // Inside Bag End the partner's world position has no place in this view: the label waits at the top edge.
+      x = w / 2;
+      y = PARTNER.edgeY * fs * 0.6;
+    } else {
+      if (away) PT_V.set(BAG_END.x, 1.2, BAG_END.z);
+      else PT_V.set(q.pos.x, q.pos.y + (q.ch?.height || 1.3) + PARTNER.overHead, q.pos.z);
+      // Camera space: x right, y up, -z forward.
+      PT_V.sub(cam.position).applyQuaternion(PT_Q.copy(cam.quaternion).invert());
+      const e = cam.projectionMatrix.elements;
+      const ahead = -PT_V.z;
+      let sx = 0;
+      let sy = 0;
+      let onScreen = false;
+      if (ahead > cam.near) {
+        sx = (0.5 + 0.5 * e[0] * (PT_V.x / ahead)) * w;
+        sy = (0.5 - 0.5 * e[5] * (PT_V.y / ahead)) * h;
+        onScreen = sx >= w * 0.04 && sx <= w * 0.96 && sy >= h * 0.06 && sy <= h * 0.97;
+      }
+      if (onScreen) {
+        mode = 'pin';
+        x = sx;
+        y = Math.max(sy, PARTNER.pinTop * fs); // the label stays inside the view
+        opacity = Math.min(1, Math.max(0, (dist - PARTNER.fadeNear) / (PARTNER.fadeFar - PARTNER.fadeNear)));
+      } else {
+        let dx;
+        let dy;
+        if (ahead > cam.near) {
+          dx = sx - w / 2;
+          dy = sy - h / 2;
+        } else {
+          // Behind: towards the side to turn to (at least as sideways as it is behind), up or down by the height.
+          const side = PT_V.x === 0 ? 1 : PT_V.x;
+          dx = Math.sign(side) * Math.max(Math.abs(side), PT_V.z, 0.01);
+          dy = -PT_V.y;
+        }
+        const hx = Math.max(1, w / 2 - PARTNER.edgeX * fs);
+        const hy = Math.max(1, h / 2 - PARTNER.edgeY * fs);
+        const t = Math.min(hx / Math.max(1e-6, Math.abs(dx)), hy / Math.max(1e-6, Math.abs(dy)));
+        x = w / 2 + dx * t;
+        y = h / 2 + dy * t;
+        ang = Math.round((Math.atan2(dy, dx) * 180) / Math.PI);
+      }
+    }
+    st.mode = mode;
+    st.x = Math.round(x);
+    st.y = Math.round(y);
+    st.ang = ang;
+    st.opacity = Math.round(opacity * 20) / 20;
+    this.set('ptMode', noArr ? 'edge noarr' : mode, (v) => (r.pt.className = `pt ${v}`));
+    this.set('ptXY', st.x * 16384 + st.y, () => (r.pt.style.transform = `translate3d(${st.x}px, ${st.y}px, 0)`));
+    this.set('ptO', st.opacity, (v) => (r.pt.style.opacity = v));
+    if (mode === 'edge' && !noArr) this.set('ptA', ang, (v) => (r.ptArr.style.transform = `rotate(${v}deg) translateX(${PARTNER.ring}em)`));
+  }
+
   /** Messages: one parchment strip per message object; nodes are kept, only the fading opacity is written. */
+  /**
+   * NOTES-38-finders: the wall tap's echo ring round the crosshair while the player's cue lasts (finders.js tap): the
+   * arrow turns with the player's facing (whole degrees), the text is the rough distance and up / down; fades out in
+   * the last 1.5 s. Hidden while a menu or scene holds the player. Writes only on a change.
+   */
+  updateTap(game, slot) {
+    const p = this.player;
+    const cue = p.tapCue;
+    const show = !!cue && !p.choosing && p.dead <= 0 && !game.screens?.menuWas?.[slot];
+    this.set('tpOn', show, (v) => this.r.tp.classList.toggle('off', !v));
+    if (!show) return;
+    const deg = Math.round((Finders.relAngle(p, cue.x, cue.z) * 180) / Math.PI);
+    this.set('tpDeg', deg, (v) => (this.r.tpRot.style.transform = `rotate(${v}deg)`));
+    const vert = cue.dy < -2 ? ' ↓' : cue.dy > 2 ? ' ↑' : '';
+    this.set('tpTx', `${cue.dist}${vert}`, () => (this.r.tpTx.textContent = `kb. ${cue.dist} m${vert}`));
+    this.set('tpOp', Math.round(Math.min(1, cue.t / 1.5) * 20), (v) => (this.r.tp.style.opacity = (v / 20).toFixed(2)));
+  }
+
   updateMessages(p) {
     const seen = new Set();
     for (const m of p.messages) {

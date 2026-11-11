@@ -37,6 +37,19 @@ export function emptyIntent() {
     // NOTES-30-music: skip to the next music track on a pad (hold LB, press View / Back). The keyboard's key (KeyY: the
     // key labelled Z on a Hungarian keyboard) is read once for the shared keyboard by game.js / ui/screens.js.
     skipTrackPressed: false,
+    // NOTES-38-finders: knock on the wall (finders.js tap): the mouse player's 1 (Digit1; not KeyZ / KeyY, whose labels
+    // swap between the Hungarian and US layouts and KeyY is the music skip),
+    // the F2 player's Ö (Digit0), a pad's chord: hold LB, click the right stick (RS alone is still the lamp held high).
+    tapPressed: false,
+    // NOTES-43-wheel: the action wheel's raw inputs (src/wheel/index.js turns them into the open wheel and the pick).
+    // The hold: a pad's LB (`wheelPadHeld`; also the climb-down / sneak hold, so the wheel opens only after a hold with
+    // no chord), the mouse player's 2 (Digit2), the F2 player's 9 (Digit9) (`wheelKeyHeld`). `wheelOther`: another pad
+    // button went down this frame (a chord: the wheel stays shut, or closes). The pick: the left stick (`padPickX/Y`,
+    // −1…1, no dead zone), the mouse's raw movement in pixels (`mousePickX/Y`) or the F2 player's arrows
+    // (`keyPickX/Y`, with `keyPickEdge` when an arrow went down this frame).
+    wheelPadHeld: false, wheelKeyHeld: false, wheelOther: false,
+    padPickX: 0, padPickY: 0, mousePickX: 0, mousePickY: 0, keyPickX: 0, keyPickY: 0, keyPickEdge: false,
+    wheelCancel: false, // the window lost the focus this frame: the keyboard's hold ended without a real release
   };
 }
 
@@ -61,7 +74,10 @@ export class Input {
       if (['Space', 'ArrowUp', 'ArrowDown', 'Tab'].includes(e.code)) e.preventDefault();
     });
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));
-    window.addEventListener('blur', () => this.keys.clear());
+    window.addEventListener('blur', () => {
+      this.keys.clear();
+      this.lostFocus = true; // NOTES-43-wheel: the keys were dropped, not released (an open wheel closes without acting)
+    });
     window.addEventListener('mousemove', (e) => {
       if (document.pointerLockElement !== canvas) return;
       this.mouseDX += e.movementX;
@@ -143,6 +159,12 @@ export class Input {
       it.pausePressed ||= p.has('Escape'); // screens (NOTES-21-screens); Esc still closes menus as backPressed
       it.lampPressed ||= p.has('KeyH'); // coop-actions (NOTES-23-coop-actions)
       it.mapPressed ||= p.has('KeyB'); // NOTES-25-map-contract: the map
+      it.tapPressed ||= p.has('Digit1'); // NOTES-38-finders: knock on the wall (the 1 key, above Q)
+      // NOTES-43-wheel: hold 2 (next to the tap's 1) for the action wheel; the mouse picks the slice.
+      it.wheelKeyHeld ||= k.has(WHEEL_KEYS.mouse);
+      it.wheelCancel ||= !!this.lostFocus;
+      it.mousePickX = this.mouseDX;
+      it.mousePickY = this.mouseDY;
     } else if (kbm === 'keys2') {
       it.mz += (k.has('ArrowUp') ? 1 : 0) - (k.has('ArrowDown') ? 1 : 0);
       it.mx += (k.has('ArrowRight') ? 1 : 0) - (k.has('ArrowLeft') ? 1 : 0);
@@ -177,6 +199,15 @@ export class Input {
       it.pausePressed ||= p.has('Escape'); // screens (NOTES-21-screens): one shared keyboard, one Esc
       it.lampPressed ||= p.has('Slash'); // coop-actions (NOTES-23-coop-actions): the '-' key right of '.' on a Hungarian keyboard
       it.mapPressed ||= p.has('BracketRight'); // NOTES-25-map-contract: the map; Ú, right of Ő on a Hungarian keyboard
+      it.tapPressed ||= p.has('Digit0'); // NOTES-38-finders: knock on the wall; Ö, the top row above P on a Hungarian keyboard
+      // NOTES-43-wheel: hold 9 (left of the tap's Ö) for the action wheel; the arrows pick the slice.
+      it.wheelKeyHeld ||= k.has(WHEEL_KEYS.keys2);
+      it.wheelCancel ||= !!this.lostFocus;
+      // (Held or pressed this frame: a tap shorter than a frame still picks.)
+      const ak = (code) => (k.has(code) || p.has(code) ? 1 : 0);
+      it.keyPickX = ak('ArrowRight') - ak('ArrowLeft');
+      it.keyPickY = ak('ArrowDown') - ak('ArrowUp');
+      it.keyPickEdge = p.has('ArrowUp') || p.has('ArrowDown') || p.has('ArrowLeft') || p.has('ArrowRight');
     }
     const entry = padIndex != null ? this.frame?.pads.get(padIndex) : null;
     if (entry) {
@@ -222,8 +253,18 @@ export class Input {
       it.ropePressed ||= edges[B.DOWN];
       // screens (NOTES-21-screens): Start (Menu) pauses; it only joins for a pad that is not bound yet (game.js).
       it.pausePressed ||= edges[B.START];
-      it.lampPressed ||= edges[B.RS]; // coop-actions (NOTES-23-coop-actions): the right-stick click
+      // NOTES-38-finders: with LB held the right-stick click knocks on the wall instead of raising the lamp (the same
+      // chord idea as NOTES-30's skip: every single-button binding stays as it was).
+      const tapChord = edges[B.RS] && btn(B.LB);
+      it.tapPressed ||= tapChord;
+      it.lampPressed ||= edges[B.RS] && !tapChord; // coop-actions (NOTES-23-coop-actions): the right-stick click
       it.mapPressed ||= edges[B.LS]; // NOTES-25-map-contract: the map, the left-stick click
+      // NOTES-43-wheel: LB held is the wheel's hold too; any other button pressed meanwhile is a chord (LB + D-pad up,
+      // LB + RS, LB + View, or a dig / jump / throw while sneaking), which keeps the wheel shut or closes it.
+      it.wheelPadHeld = btn(B.LB);
+      it.wheelOther = edges.some((e, i) => e && i !== B.LB);
+      it.padPickX = ax[0] || 0;
+      it.padPickY = ax[1] || 0;
     }
     // Settings (NOTES-21-screens): look speed and inverted vertical look (mouse, the F2 player's IJKL, the right stick).
     if (this.lookScale !== 1) {
@@ -242,6 +283,7 @@ export class Input {
   /** Clears the per-frame accumulators; call at the end of the frame. */
   endFrame() {
     this.pressed.clear();
+    this.lostFocus = false;
     this.mouseDX = 0;
     this.mouseDY = 0;
     this.mousePressed = [false, false, false];
@@ -251,3 +293,5 @@ export class Input {
 export const PAD_BUTTONS = B;
 /** NOTES-30-music: the keyboard's skip-track key (free in every binding; the key labelled Z on a Hungarian keyboard). */
 export const SKIP_KEY = 'KeyY';
+/** NOTES-43-wheel: the keyboard players' action-wheel hold keys (free in every binding and menu; checked in NOTES-43). */
+export const WHEEL_KEYS = { mouse: 'Digit2', keys2: 'Digit9' };

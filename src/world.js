@@ -144,15 +144,19 @@ function touchChunks(i0, i1, j0, j1, k0, k1) {
  * Digs towards a sphere of radius `r` at (x, y, z): every sample moves at most `bite` density units towards the
  * sphere's value per call, so the soil gives way in scrapes (about bite / 128 m per swing), not all at once.
  * Returns { removed, byMat: Float32Array of cubic metres per material }, counting samples that turned solid → air.
+ * NOTES-44-pickup-edge: the EDGE_LOCK rim samples (the world's edge) stay solid, but their distance values follow the
+ * scoop down to EDGE_RIM_MIN, so the field next to a tunnel dug up to the edge stays a true distance field. Before,
+ * an untouched rim sample (+127, "1 m deep") beside a dug one (−127) made the collision push a player who walked into
+ * the edge wall about a metre back.
  */
 export function digSphere(x, y, z, r, bite = 255) {
   const byMat = new Float32Array(MATS.length);
-  const i0 = Math.max(EDGE_LOCK, Math.floor((x - r - ORIGIN.x) / CELL) - 1);
-  const i1 = Math.min(NX - 1 - EDGE_LOCK, Math.ceil((x + r - ORIGIN.x) / CELL) + 1);
-  const j0 = Math.max(EDGE_LOCK, Math.floor((y - r - ORIGIN.y) / CELL) - 1);
+  const i0 = Math.max(0, Math.floor((x - r - ORIGIN.x) / CELL) - 1);
+  const i1 = Math.min(NX - 1, Math.ceil((x + r - ORIGIN.x) / CELL) + 1);
+  const j0 = Math.max(0, Math.floor((y - r - ORIGIN.y) / CELL) - 1);
   const j1 = Math.min(NY - 1, Math.ceil((y + r - ORIGIN.y) / CELL) + 1);
-  const k0 = Math.max(EDGE_LOCK, Math.floor((z - r - ORIGIN.z) / CELL) - 1);
-  const k1 = Math.min(NZ - 1 - EDGE_LOCK, Math.ceil((z + r - ORIGIN.z) / CELL) + 1);
+  const k0 = Math.max(0, Math.floor((z - r - ORIGIN.z) / CELL) - 1);
+  const k1 = Math.min(NZ - 1, Math.ceil((z + r - ORIGIN.z) / CELL) + 1);
   if (i0 > i1 || j0 > j1 || k0 > k1) return { removed: 0, byMat };
   const vol = CELL * CELL * CELL;
   let removed = 0;
@@ -160,14 +164,21 @@ export function digSphere(x, y, z, r, bite = 255) {
   let hitLock = false;
   for (let k = k0; k <= k1; k++) {
     const pz = ORIGIN.z + k * CELL - z;
+    const rimK = k < EDGE_LOCK || k > NZ - 1 - EDGE_LOCK;
     for (let j = j0; j <= j1; j++) {
       const py = ORIGIN.y + j * CELL - y;
+      const rimJK = rimK || j < EDGE_LOCK;
       for (let i = i0; i <= i1; i++) {
         const px = ORIGIN.x + i * CELL - x;
         const s = sIdx(i, j, k);
         const old = density[s];
         const v = Math.max(clamp8(((Math.sqrt(px * px + py * py + pz * pz) - r) / CELL) * DSCALE), old - bite);
         if (v >= old) continue;
+        // The world's rim (NOTES-44-pickup-edge): never dug, only its distance kept true (it stays solid).
+        if (rimJK || i < EDGE_LOCK || i > NX - 1 - EDGE_LOCK) {
+          if (old > EDGE_RIM_MIN) density[s] = Math.max(v, EDGE_RIM_MIN);
+          continue;
+        }
         // The locked shells (the co-op treasure niches, the lift stops' floors, ...) cannot be dug.
         if (locked && isLocked(px + x, py + y, pz + z)) {
           hitLock = true;
@@ -186,6 +197,9 @@ export function digSphere(x, y, z, r, bite = 255) {
   if (hitLock && lockHook !== null) lockHook(x, y, z);
   return { removed, byMat };
 }
+
+/** NOTES-44-pickup-edge: the lowest density a rim sample is brought to by a dig next to it (solid, about 6 cm deep). */
+const EDGE_RIM_MIN = 8;
 
 /** NOTES-35-lift-doors-bag: called as fn(x, y, z) (the sphere's centre) when a dig left locked samples alone. */
 let lockHook = null;

@@ -349,6 +349,8 @@ export function snapshot(game) {
     home: game.homeEvents?.state(),
     // modes (NOTES-15-modes): the game's mode (Kihívás or normal) and the hired dwarf; missing = normal, not hired.
     mode: game.modes?.state(),
+    // NOTES-37-blast-eagles: the Eagle calls per slot (exits.js); missing = converted from the slot's old `eagles` flag.
+    exits: game.exits?.state(),
     sacks: game.sacks.list.map((s) => ({ p: s.mesh.position.toArray().map((v) => +v.toFixed(2)), items: s.items.map((f) => f.id) })),
   };
 }

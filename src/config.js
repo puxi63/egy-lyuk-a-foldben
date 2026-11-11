@@ -81,3 +81,21 @@ export const COOP = { price: 1.35, sell: 0.75 };
 export const LADDER_LEN = 4;
 export const MAX_LADDERS = 256;
 export const MAX_PLAYERS = 2;
+
+/**
+ * NOTES-38-finders (TODO item 29): finding things on a layer.
+ * - `tap`: knocking on the wall (a free ability). `cooldown` s between taps; `noise` s of enemies' noiseT it sets (the
+ *   digging sets 1.5 s); `smaug` the noise added to Smaug's meter on layer 9; `reach` m to the wall; `cue` s the HUD
+ *   ring stays up; `here` m: a cavity this near the player's body is the one he stands in (skipped).
+ * - `grid`: the cavity survey of the generated field: every `step`-th sample (0.5 m), a cell counts as hollow when the
+ *   generated air is within `air` m; hollows smaller than `minCells` cells are ignored.
+ * - `maps`: Balin's layer map, the price per layer index 0–8 (rises with depth).
+ * - `lamp`: the lamp shimmer tiers: range (m) and price; `hz` position updates per second, `max` sparkles at once.
+ */
+export const FINDERS = {
+  tap: { cooldown: 9, noise: 2.5, smaug: 0.16, reach: 2.6, cue: 4, here: 1.2 },
+  grid: { step: 2, air: 0.3, minCells: 8 },
+  maps: [20, 30, 45, 60, 80, 100, 125, 150, 180],
+  lamp: [{ range: 3, price: 70 }, { range: 5, price: 180 }, { range: 7, price: 400 }],
+  shimmer: { hz: 4, max: 64 },
+};

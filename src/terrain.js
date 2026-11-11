@@ -6,6 +6,48 @@ import { chunkVersion, extractChunk } from './world.js';
 import { makeSoilArray } from './underground/soil-textures.js';
 import { ChunkVisibility, OPEN_REGIONS, SOLID_REGIONS } from './visibility.js';
 import { FIRE, FIRE_GLSL } from './underground/firelight.js';
+import { EDGE } from './edge.js'; // NOTES-44-pickup-edge
+
+/** GLSL float literal. */
+const glf = (v) => (Number.isInteger(v) ? `${v}.0` : String(v));
+/**
+ * NOTES-44-pickup-edge: the world's edge in the soil shader. Every fragment past the last diggable sample plane (the
+ * block's side faces and its floor; edge.js EDGE) is drawn as hard blue-grey bedrock with pale carved rune strokes, so
+ * the wall where digging stops reads as the end of the world. No new draw call or texture: one max() per fragment, the
+ * rock and the strokes only where the edge is.
+ */
+const EDGE_GLSL = `
+        float edgeSeg(vec2 p, vec2 a, vec2 b) { vec2 pa = p - a; vec2 ba = b - a; float t = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0); return length(pa - ba * t); }
+        float edgeRune(vec2 f, float h) {
+          float d = edgeSeg(f, vec2(0.0, -0.32), vec2(0.0, 0.32));
+          float s = h > 0.78 ? 1.0 : -1.0;
+          float y0 = 0.08 + fract(h * 7.31) * 0.2;
+          d = min(d, edgeSeg(f, vec2(0.0, y0), vec2(0.2 * s, y0 - 0.17)));
+          if (fract(h * 3.7) > 0.45) d = min(d, edgeSeg(f, vec2(0.0, y0 - 0.26), vec2(-0.2 * s, y0 - 0.1)));
+          else d = min(d, edgeSeg(f, vec2(0.0, y0 - 0.3), vec2(0.2 * s, y0 - 0.47)));
+          return 1.0 - smoothstep(0.03, 0.06, d);
+        }`;
+const EDGE_FRAG = `
+        // NOTES-44-pickup-edge: past the last diggable plane = the edge of the world (hard bedrock, carved runes).
+        {
+          float edgeOut = max(max(vWPos.x - ${glf(EDGE.x1)}, ${glf(EDGE.x0)} - vWPos.x), max(max(vWPos.z - ${glf(EDGE.z1)}, ${glf(EDGE.z0)} - vWPos.z), ${glf(EDGE.y0)} - vWPos.y));
+          if (edgeOut > -0.03 && vWPos.y < -0.15) {
+            vec3 ebw = pow(abs(vWNorm), vec3(4.0));
+            ebw /= (ebw.x + ebw.y + ebw.z + 1e-5);
+            float eW = smoothstep(-0.03, 0.04, edgeOut);
+            vec4 rk = triSoil(5.0, 0.45, ebw);
+            vec3 bed = vec3(0.13, 0.135, 0.155) * (0.7 + 0.6 * rk.a) + rk.rgb * 0.12;
+            vec2 fp = abs(vWNorm.y) > 0.7 ? vWPos.xz : (abs(vWNorm.x) > abs(vWNorm.z) ? vWPos.zy : vWPos.xy);
+            vec2 cell = floor(fp / 0.7);
+            float h = soilHash(vec3(cell, 7.0));
+            float rune = h > 0.55 ? edgeRune(fract(fp / 0.7) - 0.5, h) : 0.0;
+            diffuseColor.rgb = mix(diffuseColor.rgb, mix(bed, vec3(0.5, 0.46, 0.38), rune * 0.8), eW);
+            soilH = mix(soilH, 0.55 + 0.35 * rk.a - rune * 0.5, eW);
+            soilWet *= 1.0 - eW;
+            soilGlint *= 1.0 - eW;
+            soilGold *= 1.0 - eW;
+          }
+        }`;
 
 const WORKERS = 2;
 /**
@@ -143,6 +185,7 @@ ${FIRE_GLSL}` : ''}`)
                + texture(soilTex, vec3(vWPos.xy * s, layer)) * bw.z;
         }
         float soilHash(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
+        ${EDGE_GLSL}
         ${fireVert ? 'varying vec3 vFire;' : FIRE_GLSL}`)
       .replace('#include <color_fragment>', `#include <color_fragment>
         {
@@ -243,7 +286,7 @@ ${FIRE_GLSL}` : ''}`)
               soilGlint = smoothstep(0.3, 0.0, length(f)) * smoothstep(0.82, 1.0, tw) * smoothstep(6.0, 1.5, dist) * wGl * (1.0 - moss);
             }
           }
-        }`)
+        }${EDGE_FRAG}`)
       .replace('#include <specularmap_fragment>', `float specularStrength = 0.03 + soilWet * (0.25 + 0.75 * soilH);`)
       .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
         {
@@ -264,7 +307,7 @@ ${FIRE_GLSL}` : ''}`)
         totalEmissiveRadiance += diffuseColor.rgb * vec3(0.16, 0.12, 0.05) * soilGold;
         totalEmissiveRadiance += diffuseColor.rgb * ${fireVert ? 'vFire' : 'fireLight(vWPos, normalize(vWNorm) * faceDirection)'};`);
   };
-  material.customProgramCacheKey = () => `soil-${fixed ? 'fixed' : 'attr'}-${bump}-vfire`;
+  material.customProgramCacheKey = () => `soil-${fixed ? 'fixed' : 'attr'}-${bump}-vfire-edge`;
 }
 
 export class Terrain {

@@ -1,24 +1,49 @@
-/* ==== exits.js — the fast ways out of the pit (TERV 0.4 "Kijutás", 0.12): Gandalf's firework rocket (a consumable
-   that shoots you up from anywhere and bursts as a dragon over the pit) and the Eagles (an expensive upgrade, called
-   with Gandalf's moth as in the film: an eagle lifts you out and circles the pit before setting you down; cooldown) ==== */
+/* ==== exits.js — Gandalf's wares at the Green Dragon (TERV 0.4 "Kijutás", 0.12; NOTES-37-blast-eagles):
+   - GANDALF'S FIREWORK CHARGE (the user, 2026-11-10: "eddig Gandalf tűzijátéka vitt fel azonnal, most az robbant"): a
+     consumable (the saved `p.rockets` count, the same field as the old rocket; Gandalf's gift at Bag End is one too).
+     Crouch + the exit key sets it against the soil in front (or at the feet) and lights it; after CHARGE.fuse seconds
+     of a sparking fuse it blasts a sphere of CHARGE.radius out of soil and rock through the ordinary dig path
+     (world.js digSphere: the locked shells stay), hurts or knocks back players within CHARGE.harm, wakes goblins and
+     the troll cave (enemies.blast) and raises Smaug's noise meter (hoard.addNoise). It refuses in Bag End, shallower
+     than MIN_DEPTH, at a built barrel-lift stop and next to any locked set piece. Gandalf's dragon burst over the pit
+     is the blast's show.
+   - THE EAGLES (called with Gandalf's moth, as in the film): a consumable call priced like the old rocket
+     (EAGLE_PRICE each, at most EAGLE_MAX carried, sold from the start); the exit key lifts the caller (and a partner
+     close by) out at once from anywhere deeper than MIN_DEPTH and sets them down on the lawn by the inn. Saved per slot
+     in this module's own save field (`exits.calls`); a save that bought the old one-off Eagles upgrade (`eagles: true`)
+     gets EAGLE_MAX calls. ==== */
 import * as THREE from 'three';
 import { sharedAudio } from './audio.js';
-import { LAYER_TOPS } from './materials.js';
+import { armourOf } from './enemies/armour.js';
+import { lifeOf } from './modes/rules.js';
 import { SPAWN_POS } from './props.js';
+import { FALL } from './safety/index.js';
+import { lockTouches } from './underground/sites.js';
+import { digSphere, raycast } from './world.js';
 
 export const ROCKET_PRICE = 25;
 export const ROCKET_MAX = 5;
-export const EAGLE_PRICE = 900;
-export const EAGLE_COOLDOWN = 150;
-/** The Eagles are sold once a player has been down to the troll cave layer. */
-const EAGLE_UNLOCK = LAYER_TOPS[2];
-/** Shallower than this, the ladder is quicker: the exits refuse. */
+/** The Eagles are priced like the charge (the user, 2026-11-10): a call each, at most this many carried. */
+export const EAGLE_PRICE = ROCKET_PRICE;
+export const EAGLE_MAX = ROCKET_MAX;
+/**
+ * The blasting charge: `radius` m of soil and rock blasted (the biggest pick scoops 0.95 m), `fuse` s before it goes
+ * off, `harm` m from the blast centre to a body's middle that hurts or knocks back, `smaug` noise-meter units (before
+ * the treasury's distance factor), `margin` m kept clear of locked set pieces, `reach` m to the soil in front where it
+ * is set (else at the feet). The goblins' hearing distance is enemies/index.js BLAST_HEAR (30 m).
+ */
+export const CHARGE = { radius: 1.8, fuse: 4, harm: 3.4, smaug: 0.6, margin: 1.2, reach: 2.2 };
+/** Shallower than this, neither the Eagles (the ladder is quicker) nor a charge (the garden and the houses). */
 const MIN_DEPTH = 2.5;
 /** Co-op partners this close are lifted by eagles of their own. */
 const NEAR = 4;
 const PIT_TOP = new THREE.Vector3(0, 0, 0);
 /** The dragon's picture plane: up is perpendicular to the line from the burst (~33 m over the pit) to the lawn. */
 const TILT_UP = new THREE.Vector3(0, 0.42, 0.91);
+/** The Eagles' lift (s): dark by LIFT_OUT, on the lawn, light again by LIFT_IN; the eagle seen leaving until `dur`. */
+const LIFT_OUT = 0.55;
+const LIFT_IN = 1.5;
+const LIFT_DUR = 2.6;
 
 const SPARKS = 2400;
 const GRAVITY = 9.8;
@@ -130,40 +155,39 @@ export function buildEagle() {
   return g;
 }
 
-/** The talons gripping the carried player's shoulders: seen at the top of that player's own view only. */
-function buildTalons(slot) {
+/** Gandalf's firework charge as it lies lit on the soil: a red paper bundle with a gold band and a short fuse. */
+function buildCharge() {
   const g = new THREE.Group();
-  const yellow = new THREE.MeshLambertMaterial({ color: 0xc89a38 });
-  const black = new THREE.MeshLambertMaterial({ color: 0x1a1612 });
-  for (const side of [-1, 1]) {
-    const foot = new THREE.Group();
-    const shin = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.045, 0.4, 6), yellow);
-    shin.position.y = 0.2;
-    foot.add(shin);
-    for (let k = 0; k < 3; k++) {
-      const claw = new THREE.Mesh(new THREE.ConeGeometry(0.018, 0.13, 5), black);
-      claw.position.set((k - 1) * 0.035, -0.04, -0.03);
-      claw.rotation.x = Math.PI - 0.6;
-      foot.add(claw);
-    }
-    foot.position.set(side * 0.3, 0.3, -0.45);
-    foot.rotation.z = side * 0.35;
-    foot.scale.setScalar(0.5);
-    g.add(foot);
+  const red = new THREE.MeshLambertMaterial({ color: 0xb8323a });
+  const gold = new THREE.MeshLambertMaterial({ color: 0xe8c050 });
+  const dark = new THREE.MeshLambertMaterial({ color: 0x2a2018 });
+  for (const [x, z] of [[-0.06, 0], [0.06, 0], [0, 0.09]]) {
+    const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.32, 10), red);
+    tube.position.set(x, 0.16, z);
+    g.add(tube);
   }
-  g.traverse((o) => o.layers.set(10 + slot));
+  const band = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 0.05, 14), gold);
+  band.position.y = 0.17;
+  g.add(band);
+  const fuse = new THREE.Mesh(new THREE.CylinderGeometry(0.01, 0.01, 0.16, 5), dark);
+  fuse.position.set(0, 0.39, 0.03);
+  fuse.rotation.x = 0.4;
+  g.add(fuse);
+  g.userData.tip = new THREE.Vector3(0, 0.46, 0.06);
   return g;
 }
 
-/** Shop drawings (the counter's `art`), in the style of ui/art.js. */
-function rocketSVG() {
-  return `<svg viewBox="0 0 100 100" aria-hidden="true"><g transform="rotate(25 50 50)">
-    <path d="M50 92V54" stroke="#7a5a30" stroke-width="3"/>
-    <path d="M42 30q8-22 16 0v30H42z" fill="#b8323a" stroke="#4a1418" stroke-width="2"/>
-    <path d="M42 40h16M42 50h16" stroke="#e8c050" stroke-width="3"/>
-    <path d="M42 60l-6 8h28l-6-8z" fill="#2a5a8a" stroke="#14283e" stroke-width="1.5"/>
-    <text x="50" y="47" font-size="10" text-anchor="middle" fill="#f4e6c0" font-family="serif">G</text></g>
-    <g fill="#ffd27a"><circle cx="22" cy="20" r="2.5"/><circle cx="80" cy="16" r="2"/><circle cx="86" cy="34" r="1.6"/></g></svg>`;
+const PARK_Y = -10000;
+
+/** Shop drawings (the counter's `art`), in the style of ui/art.js: the charge, a bundle of Gandalf's fireworks. */
+function chargeSVG() {
+  return `<svg viewBox="0 0 100 100" aria-hidden="true"><ellipse cx="50" cy="90" rx="28" ry="5" fill="#0006"/>
+    <g stroke="#4a1418" stroke-width="2"><rect x="30" y="40" width="14" height="48" rx="3" fill="#b8323a"/>
+    <rect x="56" y="40" width="14" height="48" rx="3" fill="#b8323a"/><rect x="43" y="34" width="14" height="54" rx="3" fill="#c8424a"/></g>
+    <path d="M28 62h44" stroke="#e8c050" stroke-width="6"/>
+    <text x="50" y="80" font-size="11" text-anchor="middle" fill="#f4e6c0" font-family="serif">G</text>
+    <path d="M50 34q2-10 10-14t8-10" stroke="#2a2018" stroke-width="2.5" fill="none"/>
+    <g fill="#ffd27a"><circle cx="68" cy="10" r="4"/><circle cx="78" cy="6" r="2"/><circle cx="74" cy="18" r="1.8"/><circle cx="60" cy="6" r="1.6"/></g></svg>`;
 }
 
 function mothSVG() {
@@ -179,8 +203,8 @@ export class Exits {
   constructor(game) {
     this.game = game;
     this.scene = game.scene;
-    // All sparks (rocket trails, bangs, the dragon) in one point cloud: one draw call. Normal blending with a fading
-    // alpha, so the colours hold against the bright daytime sky (additive sparks wash out to white there).
+    // All sparks (fuse sparks, the blast, the dragon over the pit) in one point cloud: one draw call. Normal blending
+    // with a fading alpha, so the colours hold against the bright daytime sky (additive sparks wash out to white there).
     this.pos = new Float32Array(SPARKS * 3);
     this.col = new Float32Array(SPARKS * 4); // rgba: the alpha fades
     this.vel = new Float32Array(SPARKS * 3);
@@ -200,29 +224,80 @@ export class Exits {
     this.dragon = dragonPoints();
     this.shows = []; // dragon fireworks in progress
     this.trips = []; // players on their way out
+    this.charges = []; // lit charges: { p, mesh, at, c, t }
+    // One charge model per player slot, built now and parked far below the world (visible, so the game's start-up
+    // shader warm-up compiles its material: no compile hitch at the first charge).
+    this.chargeMeshes = [buildCharge(), buildCharge()];
+    for (const m of this.chargeMeshes) {
+      m.position.set(0, PARK_Y, 0);
+      this.scene.add(m);
+    }
+    this.eaglePool = []; // the carrying eagles, built at the first call and reused
+    this.kept = []; // per slot: { ch, n } the Eagle calls last seen (a slot that left keeps them for the save)
+    this.lastBlast = null; // QA / NOTES-37: the last blast's numbers
     this.ui = new Map();
     this.audio = null;
     this.tmp = new THREE.Vector3();
+    this.tmp2 = new THREE.Vector3();
   }
 
-  /* ---------------- shop and save ---------------- */
+  /* ---------------- save ---------------- */
+
+  /** This module's save field (save.js `exits`): the Eagle calls per player slot (null: nothing known for the slot). */
+  state() {
+    const save = this.game.save;
+    const n = Math.max(2, save?.slots?.length || 0);
+    const calls = [];
+    for (let i = 0; i < n; i++) {
+      const p = this.game.players[i];
+      if (p && !p.choosing) {
+        this.initCalls(p);
+        calls[i] = p.eagleCalls;
+      } else if (this.kept[i]) calls[i] = this.kept[i].n;
+      else calls[i] = this.savedCalls(i, save?.slots?.[i]?.ch);
+    }
+    return { calls };
+  }
+
+  /**
+   * The Eagle calls the loaded save gives slot i (playing character `ch`): the saved count, or, for a save from before
+   * the calls (the old one-off Eagles upgrade bought: `eagles: true`), a full EAGLE_MAX; null when the slot is not that
+   * character's (a new player).
+   */
+  savedCalls(i, ch) {
+    const save = this.game.save;
+    const slot = save?.slots?.[i];
+    if (!slot || !ch || slot.ch !== ch) return null;
+    const n = save.exits?.calls?.[i];
+    if (Number.isFinite(n)) return Math.max(0, Math.min(EAGLE_MAX, n | 0));
+    return slot.eagles ? EAGLE_MAX : 0;
+  }
+
+  /** Sets a player's Eagle calls once his character is known: kept from this session, else from the save, else 0. */
+  initCalls(p) {
+    if (p.eagleCalls !== undefined || p.choosing || !p.ch) return;
+    const k = this.kept[p.slot];
+    p.eagleCalls = k && k.ch === p.ch.id ? k.n : this.savedCalls(p.slot, p.ch.id) ?? 0;
+  }
+
+  /* ---------------- shop ---------------- */
 
   /** Extra counter rows at the Green Dragon (prices through the counter's `cost`, which applies perks and co-op). */
   shopRows(p, cost) {
-    const rows = [];
-    rows.push({ kind: 'rocket', art: rocketSVG(), label: `Gandalf tűzijáték-rakétája (${p.rockets || 0}/${ROCKET_MAX})`, price: cost(ROCKET_PRICE),
-      ok: (p.rockets || 0) < ROCKET_MAX, act: () => {
-        p.rockets = (p.rockets || 0) + 1;
-        p.say(`Rakéta a zsebben. Bárhonnan kilő a gödörből: ${this.keyName(p)}.`, 4);
-      } });
-    if (!p.eagles && (p.maxDepth || 0) >= EAGLE_UNLOCK) {
-      rows.push({ kind: 'eagles', art: mothSVG(), label: 'Gandalf molylepkéje: hívd a Sasokat', price: cost(EAGLE_PRICE), ok: true, act: () => {
-        p.eagles = true;
-        p.eagleCd = 0;
-        p.say(`A Sasok meghallják a hívásod (${this.keyName(p)}), és bárhonnan kiemelnek.`, 5);
-      } });
-    }
-    return rows;
+    this.initCalls(p);
+    const calls = p.eagleCalls || 0;
+    return [
+      { kind: 'rocket', art: chargeSVG(), label: `Gandalf tűzijáték-töltete (${p.rockets || 0}/${ROCKET_MAX})`, price: cost(ROCKET_PRICE),
+        ok: (p.rockets || 0) < ROCKET_MAX, act: () => {
+          p.rockets = (p.rockets || 0) + 1;
+          p.say(`Töltet a zsebben. A gödörben guggolva teszed le és gyújtod meg (${this.chargeKeys(p)}): utat robbant a földben és a kőben.`, 5);
+        } },
+      { kind: 'eagles', art: mothSVG(), label: `Gandalf molylepkéje: Sas-hívás (${calls}/${EAGLE_MAX})`, price: cost(EAGLE_PRICE),
+        ok: calls < EAGLE_MAX, act: () => {
+          p.eagleCalls = (p.eagleCalls || 0) + 1;
+          p.say(`A molylepke elhozza a Sasokat, ha hívod őket (${this.keyName(p)}): bárhonnan azonnal kiemelnek a gödörből.`, 5);
+        } },
+    ];
   }
 
   /** The exit key of that player's controls. */
@@ -233,55 +308,64 @@ export class Exits {
     return 'a d-pad fel';
   }
 
-  /* ---------------- per frame ---------------- */
+  /** The charge's keys: the crouch key held with the exit key. */
+  chargeKeys(p) {
+    const b = this.game.bindings[p.slot];
+    if (b?.kbm === 'mouse') return 'C + R';
+    if (b?.kbm === 'keys2') return '. + É';
+    return 'LB + d-pad fel';
+  }
 
-  /** A player's exit key (called only when no menu is open). Eagles first when ready, else a rocket. */
+  /* ---------------- input ---------------- */
+
+  /** A player's exit key (called only when no menu is open): with the crouch key a charge, alone the Eagles. */
   input(p, i, it) {
     if (!it.exitPressed || p.riding || p.dead > 0 || p.choosing) return;
+    this.initCalls(p);
+    if (it.climbDown) {
+      this.placeCharge(p);
+      return;
+    }
     if (this.game.bagEnd?.isInside(p)) return;
-    const eaglesReady = p.eagles && (p.eagleCd || 0) <= 0;
-    if (!eaglesReady && !(p.rockets > 0)) {
-      p.say(p.eagles ? `A Sasok még pihennek (${Math.ceil(p.eagleCd)} mp), és nincs rakétád.` : 'Nincs rakétád: a Zöld Sárkányban vehetsz.', 3);
+    if (!(p.eagleCalls > 0)) {
+      p.say(p.rockets > 0
+        ? `Nincs Sas-hívásod (a Zöld Sárkányban vehetsz). A töltetet guggolva gyújtod meg: ${this.chargeKeys(p)}.`
+        : 'Nincs Sas-hívásod: a Zöld Sárkányban vehetsz.', 3.5);
       return;
     }
     if (p.depth < MIN_DEPTH) {
       p.say('Ilyen sekélyről a létra is elég.', 2.5);
       return;
     }
-    if (eaglesReady) this.callEagles(p);
-    else this.launchRocket(p);
+    this.callEagles(p);
   }
 
-  launchRocket(p) {
-    p.rockets--;
-    p.riding = true;
-    this.trips.push({ kind: 'rocket', riders: [p], t: 0, dur: 1.9 });
-    p.say('Gandalf rakétája!', 2);
-    // A trail of sparks straight up from the player.
-    for (let k = 0; k < 160; k++) {
-      const c = k % 3 === 0 ? [1, 0.4, 0.2] : k % 3 === 1 ? [1, 0.85, 0.4] : [0.5, 0.7, 1];
-      this.spark(p.pos.x + (Math.random() - 0.5) * 0.5, p.pos.y + 0.3 + Math.random() * 0.6, p.pos.z + (Math.random() - 0.5) * 0.5,
-        (Math.random() - 0.5) * 3, 6 + Math.random() * 14, (Math.random() - 0.5) * 3, 0.6 + Math.random() * 0.8, c, 0.98);
+  /* ---------------- the Eagles ---------------- */
+
+  /** An eagle from the pool (built at the first call; the finale's flight has its own instanced ones). */
+  eagleFor(k) {
+    while (this.eaglePool.length <= k) {
+      const e = buildEagle();
+      e.visible = false;
+      this.scene.add(e);
+      this.eaglePool.push(e);
     }
-    this.sound('whoosh');
-    this.game.saveNow?.();
+    return this.eaglePool[k];
   }
 
   callEagles(p) {
     const game = this.game;
-    const riders = game.players.filter((q) => q === p || (q.dead <= 0 && !q.riding && !q.choosing && !game.bagEnd?.isInside(q) && q.pos.distanceTo(p.pos) < NEAR));
-    p.eagleCd = EAGLE_COOLDOWN;
-    for (const q of riders) q.riding = true;
-    const eagles = riders.map((q) => {
-      const e = buildEagle();
-      e.visible = false;
-      this.scene.add(e);
-      const talons = buildTalons(q.slot);
-      talons.visible = false;
-      q.camera.add(talons);
-      return { e, talons };
-    });
-    this.trips.push({ kind: 'eagles', riders, eagles, t: 0, dur: 8.2, a0: Math.atan2(p.pos.x, p.pos.z) });
+    const riders = game.players.filter((q) => q === p || (q.dead <= 0 && !q.riding && !q.choosing && !q.held && !game.bagEnd?.isInside(q) && q.pos.distanceTo(p.pos) < NEAR));
+    p.eagleCalls = Math.max(0, (p.eagleCalls || 0) - 1);
+    p.eagleCd = 0;
+    for (const q of riders) {
+      q.riding = true;
+      q.vel.set(0, 0, 0);
+    }
+    // Two trips can overlap (each player called): the second takes the next two eagles of the pool.
+    const base = this.trips.length ? 2 : 0;
+    const eagles = riders.map((q, k) => this.eagleFor(base + k));
+    this.trips.push({ kind: 'eagles', riders, eagles, t: 0, dur: LIFT_DUR });
     for (const q of riders) q.say(riders.length > 1 ? 'A Sasok! Mindkettőtöket kiemelnek.' : 'A Sasok!', 3);
     this.sound('wings');
     game.journal?.mark?.('sasok'); // NOTES-16-smaug-talk: the Eagles flown (Smaug's talk: "guest of eagles")
@@ -294,109 +378,292 @@ export class Exits {
     q.vel.set(0, 0, 0);
     q.yaw = 0;
     q.pitch = -0.1;
+    q.safeFallT = Math.max(q.safeFallT || 0, 1.5);
   }
+
+  /**
+   * The Eagles: the wing beats and their shadow over the rider, dark at once (LIFT_OUT), on the lawn; the light comes
+   * back with the eagle that brought him climbing away over the pit.
+   */
+  eagleTrip(tr, dt) {
+    const t = tr.t;
+    tr.riders.forEach((q, k) => {
+      const e = tr.eagles[k];
+      q.vel.set(0, 0, 0);
+      q.fadeColor = null;
+      if (t < LIFT_OUT) {
+        const flick = 0.2 * Math.sin(t * 22);
+        q.fade = Math.min(1, t / LIFT_OUT + Math.max(0, flick));
+        return;
+      }
+      if (!tr.landed?.[k]) {
+        tr.landed = tr.landed || [];
+        tr.landed[k] = true;
+        this.land(q, k);
+        if (k === 0) this.sound('beat');
+      }
+      q.fade = Math.max(0, 1 - (t - LIFT_OUT) / (LIFT_IN - LIFT_OUT));
+      // The eagle leaves: from over the rider, up and away towards the pit.
+      const u = (t - LIFT_OUT) / (tr.dur - LIFT_OUT);
+      e.visible = u < 1;
+      e.position.set(q.pos.x + 1.5 * k, q.pos.y + 3.2 + u * 9, q.pos.z - 2 - u * 14);
+      e.rotation.set(-0.25, 0, 0);
+      const flap = Math.sin(t * 6 + k);
+      e.userData.wings[0].rotation.z = flap * 0.5;
+      e.userData.wings[1].rotation.z = -flap * 0.5;
+    });
+  }
+
+  /* ---------------- the charge ---------------- */
+
+  /**
+   * Where p's charge would go and why not: { at (the charge on the soil), c (the blast centre) } or { refuse: line }.
+   * Set against the soil in front within CHARGE.reach (the blast centre 0.7 m into it), else at the feet (the centre a
+   * little under the floor).
+   */
+  chargeSpot(p) {
+    const game = this.game;
+    if (game.bagEnd?.isInside(p)) return { refuse: 'Zsáklakban nem robbantunk! A töltetet a gödörben tedd le.' };
+    if (p.depth < MIN_DEPTH) return { refuse: 'Ilyen sekélyen nem robbanthatsz: a kert és a házak bánnák. Menj lejjebb (legalább 2,5 m).' };
+    const o = p.eye(new THREE.Vector3());
+    const d = p.forward(new THREE.Vector3());
+    const hit = raycast(o, d, CHARGE.reach);
+    let at;
+    let c;
+    if (hit >= 0) {
+      at = o.clone().addScaledVector(d, Math.max(0, hit - 0.12));
+      c = o.clone().addScaledVector(d, hit + 0.7);
+    } else {
+      at = new THREE.Vector3(p.pos.x, p.pos.y, p.pos.z);
+      c = new THREE.Vector3(p.pos.x, p.pos.y - 0.3, p.pos.z);
+    }
+    // NOTES-35-lift-doors-bag: a built barrel-lift stop (its locked floor slab and the landing room above it).
+    const R = CHARGE.radius + CHARGE.margin;
+    for (const b of game.lift?.slabs?.values?.() || []) {
+      if (b.off) continue;
+      if (c.x > b.x0 - R && c.x < b.x1 + R && c.z > b.z0 - R && c.z < b.z1 + R && c.y > b.y0 - R && c.y < b.y1 + R + 3) {
+        return { refuse: 'Itt nem robbanthatsz: a hordólift megállója túl közel van. Odébb tedd le a töltetet.' };
+      }
+    }
+    // Any other locked set piece (the co-op niches, Smaug's gold, the throne room's front, Erebor's guarded walls, ...).
+    if (lockTouches(c.x, c.y, c.z, R)) return { refuse: 'Itt nem robbanthatsz: ezt a helyet nem lehet szétrobbantani. Odébb tedd le a töltetet.' };
+    return { at, c };
+  }
+
+  /** Crouch + exit key: sets p's charge and lights the fuse (one burning charge per player at a time). */
+  placeCharge(p) {
+    if (!(p.rockets > 0)) {
+      p.say('Nincs töltet nálad: a Zöld Sárkányban vehetsz.', 3);
+      return false;
+    }
+    if (this.charges.some((ch) => ch.p === p)) {
+      p.say('Már ég egy kanóc! Fuss arrébb!', 2.5);
+      return false;
+    }
+    const spot = this.chargeSpot(p);
+    if (spot.refuse) {
+      p.say(spot.refuse, 4);
+      return false;
+    }
+    p.rockets--;
+    const mesh = this.chargeMeshes[p.slot] || this.chargeMeshes[0];
+    mesh.position.copy(spot.at);
+    mesh.rotation.set(0, p.yaw, 0);
+    this.charges.push({ p, mesh, at: spot.at, c: spot.c, t: 0 });
+    p.say(`Ég a kanóc! Fuss arrébb: ${CHARGE.fuse} másodperc!`, 3.5);
+    for (const q of this.game.players) {
+      if (q !== p && !q.choosing && q.dead <= 0 && q.pos.distanceTo(spot.c) < 14) q.say(`Vigyázz, ${p.ch.name} töltete mindjárt robban!`, 3);
+    }
+    this.sound('fuse');
+    this.game.saveNow?.();
+    return true;
+  }
+
+  /** Burns the fuses (sparks from the tip); a burnt-out fuse blasts. */
+  updateCharges(dt) {
+    if (!this.charges.length) return;
+    for (const ch of this.charges) {
+      ch.t += dt;
+      const tip = this.tmp.copy(ch.mesh.userData.tip).applyEuler(ch.mesh.rotation).add(ch.mesh.position);
+      for (let k = 0; k < 3; k++) {
+        const c = k === 0 ? [1, 1, 0.8] : [1, 0.7, 0.25];
+        this.spark(tip.x, tip.y, tip.z, (Math.random() - 0.5) * 2, 1 + Math.random() * 2.5, (Math.random() - 0.5) * 2, 0.25 + Math.random() * 0.3, c, 0.9);
+      }
+      if (ch.t >= CHARGE.fuse) this.blast(ch);
+    }
+    this.charges = this.charges.filter((ch) => ch.t < CHARGE.fuse);
+  }
+
+  /**
+   * The blast: the sphere through the ordinary dig path (one digSphere call, full bite: soil and rock alike; the
+   * locked shells stay and the terrain's remesh queue takes the touched chunks as for any dig), the embedded finds in it
+   * to the one who lit it, the harm, the noise, the show.
+   */
+  blast(ch) {
+    const game = this.game;
+    const { p, c } = ch;
+    ch.mesh.position.set(0, PARK_Y, 0);
+    const t0 = performance.now();
+    const res = digSphere(c.x, c.y, c.z, CHARGE.radius, 255);
+    game.laketownEvents?.dug?.(p, c.x, c.y, c.z); // a blast at a layer-7 cavity's breach lets the lake in
+    const ms = performance.now() - t0;
+    if (game.stats) {
+      game.stats.digMs = ms;
+      game.stats.digMax = Math.max(game.stats.digMax || 0, ms);
+    }
+    const found = this.blastFinds(p, c);
+    const hurt = [];
+    for (const q of game.players) {
+      const h = this.harm(q, c);
+      if (h) hurt.push({ slot: q.slot, ...h });
+    }
+    const woke = game.enemies?.blast?.(c, p) || null;
+    // Smaug hears it as if made at the blast (his meter's distance factor from there), counted to the one who lit it.
+    let smaug = 0;
+    if (game.hoard?.addNoise) {
+      smaug = game.hoard.addNoise({ pos: c, ch: null, hoardNoise: 0 }, CHARGE.smaug) || 0;
+      if (smaug > 0 && game.players.includes(p)) p.hoardNoise = (p.hoardNoise || 0) + smaug;
+    }
+    // The show: a spray of sparks and clods at the blast, the view shakes for everyone near, the dragon over the pit.
+    for (let k = 0; k < 220; k++) {
+      const v = this.tmp2.set(Math.random() - 0.5, Math.random() - 0.3, Math.random() - 0.5).normalize().multiplyScalar(5 + Math.random() * 9);
+      const col = k % 4 === 0 ? [1, 1, 0.85] : k % 4 === 1 ? [1, 0.55, 0.1] : k % 4 === 2 ? [1, 0.8, 0.3] : [0.38, 0.27, 0.16];
+      this.spark(c.x, c.y, c.z, v.x, v.y, v.z, 0.5 + Math.random() * 0.8, col, k % 4 === 3 ? 0.97 : 0.92);
+    }
+    for (const q of game.players) {
+      const d = q.pos.distanceTo(c);
+      if (d < 25 && !game.bagEnd?.isInside(q)) q.kick = Math.max(q.kick || 0, 1 - d / 25);
+    }
+    this.startShow();
+    this.sound('boom');
+    if (game.players.includes(p) && p.dead <= 0 && !hurt.some((h) => h.slot === p.slot)) p.say('BUMM! Gandalf töltete utat robbantott.', 2.5);
+    this.lastBlast = { ms: +ms.toFixed(3), removed: +res.removed.toFixed(2), c: c.toArray().map((v) => +v.toFixed(2)), found, hurt, woke, smaug: +smaug.toFixed(3) };
+  }
+
+  /** Embedded finds inside the blast: to the one who lit it (famous ones always: they go to Bag End), up to his bag room. */
+  blastFinds(p, c) {
+    const finds = this.game.finds;
+    if (!finds?.items || !this.game.players.includes(p)) return 0;
+    let room = (p.bagCap || 0) - p.bag.length - (p.incoming || 0);
+    const r2 = (CHARGE.radius + 0.12) ** 2;
+    const got = [];
+    const left = [];
+    for (const it of finds.items) {
+      if (it.taken) continue;
+      const dx = it.x - c.x;
+      const dy = it.y - c.y;
+      const dz = it.z - c.z;
+      if (dx * dx + dy * dy + dz * dz >= r2) continue;
+      // NOTES-44-pickup-edge: the lighter's pickup filter leaves a find where it is (untaken, still gleanable).
+      if (p.accepts && !p.accepts(it.type)) {
+        left.push(it);
+        continue;
+      }
+      if (!it.type.famous) {
+        if (room <= 0) continue;
+        room--;
+      }
+      it.taken = true;
+      got.push(it);
+    }
+    if (left.length) p.leftBehind?.(left);
+    for (const f of got) {
+      p.incoming = (p.incoming || 0) + 1;
+      finds.fly(f, p, () => {
+        p.incoming--;
+        if (p.dead > 0) return;
+        p.bag.push(f.type);
+        p.say(`${f.type.name} (${f.type.value} arany)`);
+      });
+    }
+    return got.length;
+  }
+
+  /**
+   * The blast's harm (the fall rules' scale, safety/index.js): within CHARGE.harm of the blast centre a player is
+   * thrown away from it and knocked down, and loses a bite of the plate (more near the centre, × the armour's `hurt`).
+   * Normal mode never takes the plate below the fall floor (FALL.normal.floor): a blast alone never kills; in Kihívás
+   * (÷ the tier-3 "életerő", lifeOf) an empty plate kills, as a troll's grab does.
+   */
+  harm(q, c) {
+    const game = this.game;
+    if (q.dead > 0 || q.choosing || q.riding || game.bagEnd?.isInside(q)) return null;
+    const dir = this.tmp.set(q.pos.x, q.pos.y + 0.7, q.pos.z).sub(c);
+    const d = dir.length();
+    if (d >= CHARGE.harm) return null;
+    const k = 1 - d / CHARGE.harm;
+    const mult = armourOf(q).hurt ?? 1;
+    dir.y = 0;
+    if (dir.lengthSq() < 1e-4) dir.set(Math.sin(q.yaw), 0, Math.cos(q.yaw));
+    dir.normalize();
+    q.vel.x += dir.x * (3 + 6 * k);
+    q.vel.z += dir.z * (3 + 6 * k);
+    q.vel.y = Math.max(q.vel.y, 2 + 3 * k);
+    q.grounded = false;
+    q.knockT = Math.max(q.knockT || 0, 0.5);
+    q.downT = Math.max(q.downT || 0, (0.5 + 1.3 * k) * (0.5 + 0.5 * mult));
+    q.kick = 1;
+    const challenge = !!game.enemies?.challenge;
+    const cost = Math.round(((challenge ? 12 + 30 * k : 6 + 14 * k) * mult) / lifeOf(q));
+    const before = q.hunger;
+    if (challenge) {
+      q.hunger = Math.max(0, q.hunger - cost);
+      if (q.hunger <= 0) {
+        q.die('A töltet robbanása végzett veled.');
+        return { d: +d.toFixed(2), lost: Math.round(before), died: true };
+      }
+    } else q.hunger = Math.min(q.hunger, Math.max(FALL.normal.floor, q.hunger - cost));
+    const lost = Math.max(0, Math.round(before - q.hunger));
+    q.say(`Elkapott a robbanás!${lost ? ` (−${lost} a tányérból)` : ''}`, 3);
+    return { d: +d.toFixed(2), lost, down: +q.downT.toFixed(2), died: false };
+  }
+
+  /* ---------------- per frame ---------------- */
 
   update(dt) {
     const game = this.game;
-    for (const p of game.players) if (p.eagleCd > 0) p.eagleCd = Math.max(0, p.eagleCd - dt);
+    for (const p of game.players) {
+      if (p.eagleCalls === undefined) this.initCalls(p);
+      // Remembered per slot for the save (a player who leaves keeps his calls); a new object only on a change.
+      const k = this.kept[p.slot];
+      if (p.eagleCalls !== undefined && (!k || k.n !== p.eagleCalls || k.ch !== p.ch.id)) this.kept[p.slot] = { ch: p.ch.id, n: p.eagleCalls };
+    }
     for (const tr of this.trips) {
       tr.t += dt;
-      if (tr.kind === 'rocket') this.rocketTrip(tr);
-      else this.eagleTrip(tr, dt);
+      this.eagleTrip(tr, dt);
       if (tr.t >= tr.dur) {
         for (const q of tr.riders) {
           q.riding = false;
           q.fade = 0;
           q.fadeColor = null;
         }
-        for (const e of tr.eagles || []) {
-          this.scene.remove(e.e);
-          e.talons.parent?.remove(e.talons);
-        }
+        for (const e of tr.eagles) e.visible = false;
       }
     }
     this.trips = this.trips.filter((tr) => tr.t < tr.dur);
+    this.updateCharges(dt);
     this.updateShows(dt);
     this.updateSparks(dt);
     game.players.forEach((p, i) => this.indicator(i, p));
   }
 
-  /** Rocket: a white flash while the sparks rise, then the lawn, and the dragon bursts over the pit. */
-  rocketTrip(tr) {
-    const q = tr.riders[0];
-    const t = tr.t;
-    q.vel.set(0, 0, 0);
-    q.fadeColor = '#fff6e0';
-    q.fade = t < 0.6 ? t / 0.6 : t < 0.9 ? 1 : Math.max(0, 1 - (t - 0.9) / 1);
-    q.kick = Math.max(q.kick || 0, t < 0.6 ? 0.8 : 0);
-    if (t >= 0.6 && !tr.moved) {
-      tr.moved = true;
-      this.land(q, 0);
-      this.startShow();
-    }
-  }
-
-  /**
-   * Eagles: the shadow and the wing beats reach down into the pit, darkness, then each rider hangs from an eagle that
-   * circles the pit (looking down into it) and glides to the inn, where it sets the rider down.
-   */
-  eagleTrip(tr, dt) {
-    const t = tr.t;
-    const FLY0 = 1.4;
-    const FLY1 = 7.0;
-    tr.riders.forEach((q, k) => {
-      const { e, talons } = tr.eagles[k];
-      q.vel.set(0, 0, 0);
-      q.fadeColor = null;
-      if (t < FLY0) {
-        // The shadow passing over the pit's mouth, then black.
-        const flick = 0.25 + 0.2 * Math.sin(t * 9);
-        q.fade = t < 1 ? flick * (t / 1) : flick + ((t - 1) / (FLY0 - 1)) * (1 - flick);
-        return;
-      }
-      if (t < FLY1) {
-        const u = (t - FLY0) / (FLY1 - FLY0);
-        q.fade = u < 0.08 ? 1 - u / 0.08 : u > 0.93 ? (u - 0.93) / 0.07 : 0;
-        // Circle the pit, descending, then glide towards the inn.
-        const a = tr.a0 + k * Math.PI + u * 3.6;
-        const r = 5 + u * 6;
-        const circ = this.tmp.set(PIT_TOP.x + Math.sin(a) * r, 26 - u * 16, PIT_TOP.z + Math.cos(a) * r);
-        const g = Math.max(0, (u - 0.6) / 0.4);
-        const ls = SPAWN_POS;
-        q.pos.set(circ.x + (ls.x + k * 1.5 - circ.x) * g * g, circ.y + (3 - circ.y) * g * g, circ.z + (ls.z + 2 - circ.z) * g * g);
-        // Look half along the flight, half in towards the pit, down into it.
-        q.yaw = a - Math.PI / 4 - g * Math.PI / 4;
-        q.pitch = -1.0 + g * 0.65;
-        e.visible = true;
-        e.position.set(q.pos.x, q.pos.y + q.eyeH + 1.7, q.pos.z);
-        // The eagle faces along the circle (banked into it), turning towards the inn for the glide.
-        e.rotation.set(0, a - Math.PI / 2 - g * Math.PI / 4, -0.25 * (1 - g));
-        const flap = Math.sin(t * 5.5 + k);
-        e.userData.wings[0].rotation.z = flap * 0.45;
-        e.userData.wings[1].rotation.z = -flap * 0.45;
-        talons.visible = true;
-        // Both hands hold on: no pick in the view while flying.
-        q.viewTool.visible = false;
-        if (Math.floor(t * 5.5 / Math.PI / 2) !== Math.floor((t - dt) * 5.5 / Math.PI / 2) && k === 0) this.sound('beat');
-        return;
-      }
-      // Set down: dark for a moment, on the lawn, light again.
-      e.visible = false;
-      talons.visible = false;
-      q.viewTool.visible = true;
-      if (!tr.landed?.[k]) {
-        tr.landed = tr.landed || [];
-        tr.landed[k] = true;
-        this.land(q, k);
-      }
-      q.fade = Math.max(0, 1 - (t - FLY1) / (tr.dur - FLY1));
-    });
-  }
-
   /* ---------------- the dragon firework ---------------- */
 
-  startShow() {
-    this.shows.push({ t: 0, rocket: [PIT_TOP.x, 1, PIT_TOP.z], burst: false });
+  /**
+   * Launches the dragon firework. Default: out of the pit, the picture facing the lawn by the inn. party/ (NOTES-39-party)
+   * passes `{ x, z, toward }`: the launch spot on the ground and the point (THREE.Vector3) the picture faces.
+   */
+  startShow(opts = null) {
+    const rocket = opts ? [opts.x, 1, opts.z] : [PIT_TOP.x, 1, PIT_TOP.z];
+    let right = null;
+    let up = null;
+    if (opts?.toward) {
+      // The burst happens ~32.5 m up (the climb below); the picture's right and up are square to the line to the viewers.
+      const look = opts.toward.clone().sub(this.tmp.set(rocket[0], 1 + 1.1 * 1.1 * 26, rocket[2])).normalize();
+      right = new THREE.Vector3(0, 1, 0).cross(look).normalize();
+      up = look.clone().cross(right).normalize();
+    }
+    this.shows.push({ t: 0, rocket, burst: false, right, up });
   }
 
   updateShows(dt) {
@@ -416,9 +683,13 @@ export class Exits {
         const sc = 2.2;
         for (const [x, y, hot] of this.dragon) {
           // The picture's "up" is tilted back so the dragon faces the lawn by the inn, where the players stand.
-          const tx = cx + (x - 0.5) * sc;
-          const ty = cy + (y - 2) * sc * TILT_UP.y + (Math.random() - 0.5) * 0.3;
-          const tz = cz + (y - 2) * sc * TILT_UP.z;
+          const R = s.right;
+          const U = s.up;
+          const px = (x - 0.5) * sc;
+          const py = (y - 2) * sc;
+          const tx = R ? cx + px * R.x + py * U.x : cx + px;
+          const ty = (R ? cy + px * R.y + py * U.y : cy + py * TILT_UP.y) + (Math.random() - 0.5) * 0.3;
+          const tz = R ? cz + px * R.z + py * U.z : cz + py * TILT_UP.z;
           const c = hot ? [1, 0.92, 0.45] : y > 3.8 || (x > -1.3 && x < 2.3 && y > 1.8) ? [1, 0.5, 0.05] : [0.95, 0.18, 0.04];
           // With the drag k per 1/60 s a spark travels v / (60 (1 − k)) in all: start at the speed that ends on the outline.
           const k = 60 * (1 - 0.86);
@@ -490,7 +761,7 @@ export class Exits {
 
   /* ---------------- HUD line ---------------- */
 
-  /** A small line under the bag: rockets in the pocket and whether the Eagles can be called. */
+  /** A small line under the bag: a burning fuse, the charges in the pocket and the Eagle calls, with their keys. */
   indicator(i, p) {
     const el = this.game.huds[i]?.el;
     if (!el) return;
@@ -505,9 +776,11 @@ export class Exits {
       this.ui.set(p, ui);
     }
     const parts = [];
-    if (p.rockets > 0) parts.push(`Rakéta: ${p.rockets}`);
-    if (p.eagles) parts.push(p.eagleCd > 0 ? `Sasok: ${Math.ceil(p.eagleCd)} mp` : 'Sasok: hívhatók');
-    const text = parts.length && !p.choosing ? `${parts.join(' · ')} — ${this.keyName(p)}` : '';
+    const lit = this.charges.find((ch) => ch.p === p);
+    if (lit) parts.push(`Ég a kanóc: ${Math.max(1, Math.ceil(CHARGE.fuse - lit.t))} mp!`);
+    if (p.rockets > 0) parts.push(`Töltet: ${p.rockets} (${this.chargeKeys(p)})`);
+    if (p.eagleCalls > 0) parts.push(`Sasok: ${p.eagleCalls} (${this.keyName(p)})`);
+    const text = parts.length && !p.choosing ? parts.join(' · ') : '';
     if (text !== ui.text) {
       ui.text = text;
       ui.line.textContent = text;
@@ -531,6 +804,7 @@ export class Exits {
       const burst = (start, dur, type, f0, f1, vol, q = 1) => {
         const src = a.createBufferSource();
         src.buffer = this.noise;
+        src.loop = dur > 0.9; // the noise buffer is 1 s long: the fuse's hiss and the rumble loop it
         const f = a.createBiquadFilter();
         f.type = type;
         f.Q.value = q;
@@ -544,7 +818,16 @@ export class Exits {
         src.start(t + start);
         src.stop(t + start + dur + 0.05);
       };
-      if (kind === 'whoosh') burst(0, 1.2, 'bandpass', 300, 3200, 0.5, 2);
+      if (kind === 'fuse') {
+        // The fuse's hiss for the whole burn, with a few spits.
+        burst(0, CHARGE.fuse, 'highpass', 3000, 5200, 0.07);
+        for (let k = 0; k < 10; k++) burst(Math.random() * CHARGE.fuse, 0.04, 'bandpass', 2400, 3600, 0.12, 3);
+      } else if (kind === 'boom') {
+        // The blast in the rock: a deep thud, the rumble after it, falling grit.
+        burst(0, 1.8, 'lowpass', 500, 35, 1.0);
+        burst(0.05, 2.6, 'lowpass', 180, 30, 0.6);
+        for (let k = 0; k < 18; k++) burst(0.4 + Math.random() * 1.8, 0.05, 'highpass', 1800, 3000, 0.15);
+      }
       else if (kind === 'bang') {
         burst(0, 0.9, 'lowpass', 900, 60, 0.9);
         // The crackle afterwards.

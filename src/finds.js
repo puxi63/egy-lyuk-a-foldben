@@ -134,6 +134,37 @@ export const FIND_TYPES = [
   { id: 'arkenko', name: 'Az Arkenkő', value: 0, layer: 8, weight: 0, color: 0xf4f8ff, keep: true },
 ];
 
+/**
+ * NOTES-44-pickup-edge: the pickup filter's categories (per player slot: which dug finds go into the bag). `id` is what
+ * the save stores (`slots[i].pickup` lists the categories switched off), `label` the Zsák screen's toggle.
+ */
+export const PICKUP_CATS = [
+  { id: 'food', label: 'Étel', note: 'krumpli, gomba, barlangi hal' },
+  { id: 'small', label: 'Apró holmi', note: 'kancsó, csont, lánc, háló…' },
+  { id: 'valuable', label: 'Értékes leletek', note: 'a falban csillogók, Szmaug aranya' },
+  { id: 'gem', label: 'Drágakövek', note: 'smaragd, rubin, zafír, kristály…' },
+];
+/** Edible finds (the dug ones, plus the garden's snacks for completeness: shire/meals.js BAG_FOOD). */
+const FOOD_FINDS = new Set(['krumpli', 'gomba', 'barlangihal', 'paradicsom', 'almaspite']);
+/** Gems and crystals (all embedded). */
+const GEM_FINDS = new Set(['smaragd', 'rubin', 'kristaly', 'zafir', 'feherko', 'nyersko', 'csiszoltko', 'szrubin', 'szfeherko']);
+
+/**
+ * The pickup category of a find type, or null when it is always picked up (famous finds, `keep` items: Sting, the Ring,
+ * the mithril shirt, the Arkenstone; and anything without a type). Food → gems → embedded or Smaug's hoard = valuable →
+ * the rest (the loose, common finds) = small. Cached on the type.
+ */
+export function pickupCat(type) {
+  if (!type) return null;
+  if (type.pickCat !== undefined) return type.pickCat;
+  const c = type.famous || type.keep ? null
+    : FOOD_FINDS.has(type.id) ? 'food'
+      : GEM_FINDS.has(type.id) ? 'gem'
+        : type.embedded || type.hoard ? 'valuable' : 'small';
+  Object.defineProperty(type, 'pickCat', { value: c, enumerable: false });
+  return c;
+}
+
 /** A small recognisable model per find type (about 10–25 cm), centred on the origin. */
 function buildGeometry(id) {
   const g = [];
@@ -893,8 +924,12 @@ export class Finds {
     }
   }
 
-  /** Embedded finds inside the dug sphere, at most `room` of them: returns them (taken; the next view drops them). */
-  collect(x, y, z, r, room) {
+  /**
+   * Embedded finds inside the dug sphere, at most `room` of them: returns them (taken; the next view drops them).
+   * NOTES-44-pickup-edge: `accept(type)` false (the player's pickup filter) leaves a find where it is, untaken (the
+   * shimmer and the hirelings' gleaning still see it); it is pushed to `left` and takes no room.
+   */
+  collect(x, y, z, r, room, accept = null, left = null) {
     const got = [];
     const r2 = (r + 0.12) * (r + 0.12);
     for (const it of this.items) {
@@ -903,6 +938,10 @@ export class Finds {
       const dy = it.y - y;
       const dz = it.z - z;
       if (dx * dx + dy * dy + dz * dz < r2) {
+        if (accept && !accept(it.type)) {
+          left?.push(it);
+          continue;
+        }
         it.taken = true;
         got.push(it);
       }
@@ -910,7 +949,55 @@ export class Finds {
     return got;
   }
 
-  /** Random finds for the soil removed (cubic metres) at a depth: a type plus a spot near the dig point. */
+  /**
+   * NOTES-44-pickup-edge: the nearest untaken, not famous embedded find within `rad` of the segment o + d·[0, len] (the
+   * pick's reach before the wall it hits): a find whose soil was dug away round it (left by the pickup filter, or by a
+   * full bag) hangs in the air there; a swing at it takes it. Only the chunks the segment passes are searched (a swing
+   * calls this once). Returns the item or null.
+   */
+  inReach(o, d, len, rad = 0.28) {
+    const S = CHUNK * CELL;
+    let best = null;
+    let bestT = Infinity;
+    const keys = new Set();
+    for (let s = 0; s <= len + 0.3; s += 1) {
+      const t = Math.min(s, len);
+      for (const e of [-rad, rad]) {
+        const cx = Math.floor((o.x + d.x * t + e - ORIGIN.x) / S);
+        const cy = Math.floor((o.y + d.y * t + e - ORIGIN.y) / S);
+        const cz = Math.floor((o.z + d.z * t + e - ORIGIN.z) / S);
+        if (cx < 0 || cy < 0 || cz < 0 || cx >= CX || cy >= CY || cz >= CZ) continue;
+        keys.add(cx + CX * (cy + CY * cz));
+      }
+    }
+    const r2 = rad * rad;
+    for (const key of keys) {
+      const list = this.byChunk[key];
+      if (!list) continue;
+      for (const it of list) {
+        if (it.taken || it.type.famous) continue;
+        const px = it.x - o.x;
+        const py = it.y - o.y;
+        const pz = it.z - o.z;
+        const t = px * d.x + py * d.y + pz * d.z;
+        if (t < 0 || t > len || t >= bestT) continue;
+        const qx = px - d.x * t;
+        const qy = py - d.y * t;
+        const qz = pz - d.z * t;
+        if (qx * qx + qy * qy + qz * qz > r2) continue;
+        // Only one hanging in the air (a find still in the soil beside the ray is the dig sphere's, as before).
+        if (sampleDensity(it.x, it.y, it.z) > 0) continue;
+        best = it;
+        bestT = t;
+      }
+    }
+    return best;
+  }
+
+  /**
+   * Random finds for the soil removed (cubic metres) at a depth: a type plus a spot near the dig point. (NOTES-44: the
+   * pickup filter is applied by the caller, after the roll, so the random sequence and the find rate stay the same.)
+   */
   randomFinds(removed, depth, x, y, z) {
     const got = [];
     let chance = removed * RANDOM_PER_M3;

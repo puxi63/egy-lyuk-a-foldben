@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { LADDER_LEN, MAX_LADDERS } from './config.js';
 import { buildBagEnd } from './surface/bagend.js';
+import { edgeFence } from './surface/edge-fence.js'; // NOTES-44-pickup-edge
 import { flushPlants } from './surface/flora.js';
 import { buildGarden, buildSpoilHeap } from './surface/garden.js';
 import { groundGeometry, groundHeight, LAKE, laneGeometry, scatterTufts, scatterWildflowers, waterDist } from './surface/ground.js';
@@ -36,6 +37,7 @@ const NO_GROW = [
   [-22.8, -10.4, -13.8, 9.0], // vegetable beds
   [-22.2, 10.8, -18.8, 14.4], // potting shed
   [-21.8, -14.2, -19.2, -12.2], // beehives
+  [19.0, 13.1, 22.4, 17.9], // the dwarf smith's forge (smith/props.js FORGE, NOTES-40-smith)
 ];
 
 function noGrow(x, z) {
@@ -88,6 +90,7 @@ export function buildSurface(scene, detail) {
   scatterTufts(batch, noGrow);
   scatterWildflowers(batch, noGrow);
   const plantTris = flushPlants(batch);
+  edgeFence(batch); // NOTES-44-pickup-edge: the fence round the walkable square (added last: nothing else changes)
   const meshes = batch.build(root, mats);
 
   // The mill's water wheel turns (its own mesh, rotated before each render).

@@ -264,6 +264,8 @@ export class Game {
       out[i] = {
         ch: p.ch.id, toolTier: p.toolTier, bagTier: p.bagTier, ladders: p.ladders, hunger: Math.round(p.hunger),
         bag: p.bag.map((f) => f.id), maxDepth: Math.round(p.maxDepth || 0), rockets: p.rockets || 0, eagles: !!p.eagles, eagleCd: Math.round(p.eagleCd || 0), armour: p.armour || 0, sting: !!p.sting, pos: p.dead > 0 ? null : p.pos.toArray().map((v) => +v.toFixed(2)), yaw: +p.yaw.toFixed(3),
+        xp: p.xp?.state(), // NOTES-41-xp: optional (absent until the slot earns XP; absent = level 1)
+        pickup: p.pickupState?.(), // NOTES-44-pickup-edge: optional, the categories switched off (absent = all on)
       };
     });
     return out;
@@ -298,6 +300,8 @@ export class Game {
       p.rockets = saved.rockets || 0;
       p.eagles = !!saved.eagles;
       p.eagleCd = saved.eagleCd || 0;
+      p.xp?.restore(saved.xp, Math.max(p.maxDepth, p.depth)); // NOTES-41-xp: absent in older saves = level 1, 0 XP
+      p.restorePickup?.(saved.pickup); // NOTES-44-pickup-edge: absent in older saves = every category picked up
       this.tutorial?.skipFinished(p);
     } else if (!this.bench) this.huds[slot].openSelect(this);
     p.say(slot === 0 ? Tutorial.joinHint() : 'Csatlakozott a második játékos!', slot === 0 ? 8 : 4);
@@ -459,6 +463,8 @@ export class Game {
     // The finale's music: 'menekules' during the escape, 'unnep' at the end (finale/, NOTES-7b-finale).
     const fin = this.finale?.musicSituation();
     if (fin) return fin;
+    const party = this.shire?.party?.musicSituation(); // party (NOTES-39-party): 'unnep' during Bilbo's party
+    if (party) return party;
     // 'szmaug' in Smaug's treasury while he sleeps there (hoard/, NOTES-7a-hoard).
     const hs = this.hoard?.musicSituation();
     if (hs) return hs;

@@ -53,6 +53,17 @@ export class Tutorial {
     return true;
   }
 
+  /**
+   * NOTES-43-wheel: a one-off hint whose "shown once" the caller remembers itself (per device, in the settings: the
+   * action wheel's new actions), so nothing is added to the saved done list. Same box and place as hint(); refused
+   * (false) while another hint is up for that player.
+   */
+  note(p, html, seconds = 10) {
+    if (!html || this.hints.has(p)) return false;
+    this.hints.set(p, { html, t: seconds });
+    return true;
+  }
+
   state() {
     return [...this.done];
   }

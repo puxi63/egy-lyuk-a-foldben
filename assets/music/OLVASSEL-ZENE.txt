@@ -34,7 +34,8 @@ Helyzethez kötött zenék (mind elhagyható)
                                 általános lista szól). Szmaug közelében a zene magától halkabb lesz.
   halal.mp3                     rövid zene, amikor meghalsz
   menekules.mp3                 a finálé menekülésekor: Szmaug üldöz felfelé a gödörben (és amíg Bárd le nem lövi)
-  unnep.mp3                     a befejezés ünnepén a Zöld Sárkányban és a hazatérésnél
+  unnep.mp3                     a befejezés ünnepén a Zöld Sárkányban és a hazatérésnél, valamint
+                                Bilbó ünnepségén a Mulatóréten (a jelenet végéig)
   stablista.mp3                 a stáblista alatt (a címképernyő Stáblista pontja): ide való a törpék dala,
                                 ha van saját felvételed
 

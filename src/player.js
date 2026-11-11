@@ -11,6 +11,11 @@ import { mirkwoodWaterStep } from './underground/mirkwood-water.js';
 import { laketownWaterStep } from './underground/laketown-water.js';
 // Fall damage and the belay rope (safety/, NOTES-11-safety).
 import { landFall } from './safety/index.js';
+import { findersOf } from './finders.js'; // NOTES-38-finders
+import { applySkills, XpHub, XpState } from './xp/index.js'; // NOTES-41-xp
+// NOTES-44-pickup-edge: the pickup filter's categories and the edge of the world.
+import { pickupCat, PICKUP_CATS } from './finds.js';
+import { beyondEdge, EDGE, EDGE_LINES, pushesEdge } from './edge.js';
 
 /**
  * The selectable characters (TERV.md 0.3). `perk` multipliers: find (random find chance), power (bite), rock (bite in
@@ -252,6 +257,16 @@ export class Player {
     this.camera.layers.enable(0);
     // Each player sees the other bodies (layer 1 + slot) but not their own; the view tool is on layer 10 + slot.
     this.camera.layers.enable(10 + slot);
+    // NOTES-41-xp: this slot's experience and skills (restored by game.js addPlayer from the save's optional `xp`).
+    game.xp ||= new XpHub(game);
+    this.xp = new XpState(this);
+    // NOTES-44-pickup-edge: which dug find categories go into the bag (all on = as before; game.js restores the save's
+    // optional `slots[i].pickup`, the list of categories switched off), and the throttles of the two HUD lines.
+    this.pickup = { food: true, small: true, valuable: true, gem: true };
+    this.leftCd = 0;
+    this.leftN = 0;
+    this.edgeCd = 0;
+    this.edgePushT = 0;
     this.setCharacter(character);
     game.scene.add(this.camera);
     this.lamp = new THREE.PointLight(0xffeedd, 0, 18, 1.7);
@@ -270,7 +285,10 @@ export class Player {
   /** Swaps the character: its body (seen by the others) and its perks. */
   setCharacter(ch) {
     this.ch = ch;
-    this.perk = { ...NO_PERK, ...ch.perk };
+    // NOTES-41-xp: the character's perks are the base; the skill ranks multiply them (applySkills sets perk and xpK).
+    this.basePerk = { ...NO_PERK, ...ch.perk };
+    this.perk = this.basePerk;
+    applySkills(this);
     // Eye height and collision spheres per character: a hobbit fits lower passages than a dwarf.
     this.eyeH = ch.eye || PLAYER.eye;
     this.spheres = [PLAYER.spheres[0], (PLAYER.spheres[0] + this.eyeH - 0.05) / 2, this.eyeH - 0.05];
@@ -339,8 +357,13 @@ export class Player {
 
   /** One frame: look, move, collide, act. `it` is the player's intent; `menuOpen` freezes movement. */
   update(dt, it, menuOpen) {
+    // NOTES-38-finders: the finders' per-frame work runs once, with the first player (tap cooldowns, cues, the shimmer).
+    if (this === this.game.players[0]) findersOf(this.game).tick(dt);
     for (const m of this.messages) m.t -= dt;
     this.messages = this.messages.filter((m) => m.t > 0);
+    // NOTES-44-pickup-edge: the throttles of the left-behind and the world-edge lines.
+    if (this.leftCd > 0) this.leftCd -= dt;
+    if (this.edgeCd > 0) this.edgeCd -= dt;
     if (this.dead > 0) {
       this.dead -= dt;
       if (this.dead <= 0) this.respawn();
@@ -409,7 +432,10 @@ export class Player {
       let speed = PLAYER.walk;
       // ---- Sneaking (NOTES-4a-mirkwood: the elves' feast lights go out if you rush at them): the crouch key on the
       // ground walks at 42 % (the ladder's climb-down key; not on a ladder). ----
-      if (it.climbDown && this.grounded && !ladder) speed *= 0.42;
+      // NOTES-41-xp: Bilbo's Lopakodás skill adds to the factor (at most 0.57: still slower than the 2.2 m/s rush of
+      // Mirkwood's feast clearings).
+      if (it.climbDown && this.grounded && !ladder) speed *= 0.42 + this.xpK.sneak;
+      else speed *= this.xpK.walk; // NOTES-41-xp: Kíli's Könnyű léptek
       // ---- end of the sneaking block ----
       // Mirkwood's sticky web sheets slow the walk (mirkwood-foes/ sets `slow`, 1 elsewhere).
       speed *= this.slow || 1;
@@ -494,17 +520,31 @@ export class Player {
     // ---- end of the safety block ----
     // Keep inside the Shire (Bag End's interior lies far outside it).
     if (!inside) {
-      this.pos.x = Math.max(-60, Math.min(60, this.pos.x));
-      this.pos.z = Math.max(-60, Math.min(60, this.pos.z));
+      const B = EDGE.surface;
+      const ox = this.pos.x;
+      const oz = this.pos.z;
+      this.pos.x = Math.max(-B, Math.min(B, this.pos.x));
+      this.pos.z = Math.max(-B, Math.min(B, this.pos.z));
+      // NOTES-44-pickup-edge: walking into the edge for a moment (the surface square; underground the block's
+      // undiggable side faces, while the walk is blocked) says so, throttled per player. A few comparisons per frame.
+      const atEdge = ((ox !== this.pos.x || oz !== this.pos.z) && wl > 0.5)
+        || (this.pos.y < -0.4 && wl > 0.5 && pushesEdge(this.pos.x, this.pos.z, wx, wz, 0.5)
+          && Math.abs(this.pos.x - prevX) + Math.abs(this.pos.z - prevZ) < sp * 0.5);
+      this.edgePushT = atEdge && !menuOpen ? this.edgePushT + dt : 0;
+      if (this.edgePushT > EDGE_LINES.push) this.sayEdge(this.pos.y < -0.4 ? EDGE_LINES.dig : EDGE_LINES.walk);
     }
     if (this.pos.y < ORIGIN.y - 5) this.respawn(); // fell out of the world
 
+    // NOTES-41-xp: below the next layer's top for the first time: one comparison per frame, the reward an event.
+    if (this.pos.y < this.xp.nextY && !inside) this.xp.deeper(this.depth);
     this.cooldown -= dt;
     if (!menuOpen && !inside) {
       // coop-actions (NOTES-23-coop-actions): both hands on the chest or on the raised lamp: no swing, no ladder.
       const hands = this.carrying || this.digBlocked;
       if (it.dig && this.cooldown <= 0 && !this.held && !this.wrap && !down && !hands) this.tryDig();
       if (it.ladderPressed && !this.carrying) this.tryLadder();
+      // NOTES-38-finders: knock on the wall and listen for the nearest hollow (free; noisy; a cooldown).
+      if (it.tapPressed && !this.held && !this.wrap && !down) findersOf(this.game).tap(this);
     }
     // A dropped bag is picked up by touching it.
     const items = this.game.sacks.take(this.pos.x, this.pos.y, this.pos.z);
@@ -813,6 +853,7 @@ export class Player {
     this.cooldown *= this.game.coopActions?.digMult?.(this) ?? 1;
     // shire (NOTES-26-shire): "jóllakott" (a meal on time) digs a little faster, "morcos" (one skipped) a little slower.
     this.cooldown *= this.game.shire?.digMult?.(this) ?? 1;
+    this.cooldown *= this.xpK.swing; // NOTES-41-xp: Bofur's Gyors csákány
     this.swing = 1;
     // A goblin in front takes the blow (the pick, or Sting once owned): no digging this swing.
     if (this.game.enemies?.strike(this, o, d)) return;
@@ -820,11 +861,17 @@ export class Player {
     if (this.game.mirkFoes?.strike(this, o, d)) return;
     // No digging under water (laketown-events/: a flooded cavity).
     if (this.game.laketownEvents?.strike(this, o, d)) return;
+    // NOTES-44-pickup-edge: a find hanging in the air in front of the pick (its soil dug away while the pickup filter or
+    // a full bag left it) is taken by this swing, if the filter takes it now.
+    if (this.takeLoose(o, d, t < 0 ? PLAYER.reach : t)) return;
     if (t < 0) return;
     const at = o.clone().addScaledVector(d, t + 0.05);
+    // NOTES-44-pickup-edge: the pick hits the undiggable rim of the world (the block's side / bottom faces, or the lawn
+    // outside the pit's block): a throttled line instead of a silent nothing.
+    if (at.y < 0.3 && beyondEdge(at.x, at.y, at.z)) this.sayEdge(EDGE_LINES.dig);
     const mat = MATS[materialAt(at.x, at.y, at.z)];
     // Hard soil: a slightly narrower scoop and a much smaller bite per swing (the tool's power / hardness).
-    const r = this.tool.radius / Math.pow(mat.hard, 0.25);
+    const r = (this.tool.radius / Math.pow(mat.hard, 0.25)) * this.xpK.radius; // NOTES-41-xp: Bofur's Széles csapás
     const bite = (this.tool.power * this.perk.power * (mat.hard > 1 ? this.perk.rock : 1)) / mat.hard;
     // The sphere sits half its radius behind the hit surface, so the scoop is body-wide.
     const hit = o.addScaledVector(d, t + r * 0.5);
@@ -840,21 +887,118 @@ export class Player {
     this.kick = 0.5 + Math.min(1, mat.hard / 2.4) * 0.5;
     if (res.removed <= 0) return;
     this.addHunger(-HUNGER.perSwing * mat.hard);
+    this.xp.dig(mat.hard, -hit.y); // NOTES-41-xp: experience from digging
     this.game.enemies?.dug(this); // a stone for the pocket
     // Dug-up finds fly into the bag by themselves; a full bag leaves embedded finds in the wall.
+    // NOTES-44-pickup-edge: so does the player's pickup filter (they take no room); a random loose find the filter
+    // refuses is rolled as before (same sequence, same rate) but stays in the soil: it is not spawned.
     const room = this.bagCap - this.bag.length - this.incoming;
-    const embedded = this.game.finds.collect(hit.x, hit.y, hit.z, r, Math.max(0, room));
-    const random = this.game.finds.randomFinds(res.removed * this.perk.find, -hit.y, hit.x, hit.y, hit.z).slice(0, Math.max(0, room - embedded.length));
-    if (room <= 0) this.say('Tele a zsák! Vidd fel a pulthoz.');
-    for (const f of [...embedded, ...random]) {
-      this.incoming++;
-      this.game.finds.fly(f, this, () => {
-        this.incoming--;
-        if (this.dead > 0) return;
-        this.bag.push(f.type);
-        this.say(`${f.type.name} (${f.type.value} arany)`);
-      });
+    const filtered = !this.pickupAll();
+    const left = filtered ? [] : null;
+    const embedded = this.game.finds.collect(hit.x, hit.y, hit.z, r, Math.max(0, room), filtered ? this.acceptFn : null, left);
+    let random = this.game.finds.randomFinds(res.removed * this.perk.find, -hit.y, hit.x, hit.y, hit.z);
+    if (filtered) {
+      for (const f of random) if (!this.accepts(f.type)) left.push(f);
+      random = random.filter((f) => this.accepts(f.type));
     }
+    random = random.slice(0, Math.max(0, room - embedded.length));
+    if (room <= 0) this.say('Tele a zsák! Vidd fel a pulthoz.');
+    if (left?.length) this.leftBehind(left);
+    for (const f of embedded) this.flyIn(f);
+    for (const f of random) this.flyIn(f);
+  }
+
+  /** A dug-up find flies into the bag (a famous one into Bag End's mathom room: finds.fly replaces the callback). */
+  flyIn(f) {
+    // NOTES-41-xp: a famous find goes to the mathom room (finds.fly replaces the callback below): its XP comes now.
+    if (f.type.famous) this.xp.find(f.type);
+    this.incoming++;
+    this.game.finds.fly(f, this, () => {
+      this.incoming--;
+      if (this.dead > 0) return;
+      this.bag.push(f.type);
+      this.say(`${f.type.name} (${f.type.value} arany)`);
+      this.xp.find(f.type); // NOTES-41-xp: experience from a find
+    });
+  }
+
+  /* ---------------- NOTES-44-pickup-edge: the pickup filter and the world's edge ---------------- */
+
+  /** True while every category is picked up (the default: the dig takes the old path, no filter calls). */
+  pickupAll() {
+    const k = this.pickup;
+    return k.food && k.small && k.valuable && k.gem;
+  }
+
+  /** Whether this player's filter takes a find type into the bag (famous, kept and quest items always). */
+  accepts(type) {
+    const c = pickupCat(type);
+    return !c || this.pickup[c] !== false;
+  }
+
+  /** `accepts` bound once (finds.collect's predicate). */
+  get acceptFn() {
+    return (this.acceptBound ||= (type) => this.accepts(type));
+  }
+
+  /** Switches one category on / off (the Zsák screen); returns the new state, or null for an unknown id. */
+  togglePickup(id, on = !this.pickup[id]) {
+    if (!(id in this.pickup)) return null;
+    this.pickup[id] = !!on;
+    return this.pickup[id];
+  }
+
+  /** The save's optional per-slot field: the categories switched off, or undefined while all are on (as before). */
+  pickupState() {
+    const off = PICKUP_CATS.filter((c) => this.pickup[c.id] === false).map((c) => c.id);
+    return off.length ? off : undefined;
+  }
+
+  /** Restores the save's field (absent or anything but a list = all on; unknown ids are ignored). */
+  restorePickup(off) {
+    for (const c of PICKUP_CATS) this.pickup[c.id] = !(Array.isArray(off) && off.includes(c.id));
+  }
+
+  /**
+   * The finds the filter left (a swing's list): one short line ("Krumpli: otthagytad (szűrő)"), at most every 6 s per
+   * player; finds left meanwhile are counted into the next line. The first line of a session says where to change it.
+   */
+  leftBehind(list) {
+    // An embedded find is counted once (the next swings round it, or at it hanging in the air, leave it again).
+    const fresh = list.filter((f) => !f.leftSaid);
+    if (!fresh.length) return;
+    for (const f of fresh) f.leftSaid = true;
+    this.leftN += fresh.length;
+    if (this.leftCd > 0) return;
+    const name = fresh[fresh.length - 1].type.name;
+    const more = this.leftN - 1;
+    const first = !this.leftTold;
+    this.say(`${name}${more > 0 ? ` és még ${more}` : ''}: otthagytad (szűrő)${first ? ' · Szünet › Zsák: Felvétel' : ''}`, first ? 4.5 : 2.5);
+    this.leftTold = true;
+    this.leftN = 0;
+    this.leftCd = 6;
+  }
+
+  /** A swing at a find hanging in the air within reach: taken if the filter and the bag allow (true: swing spent). */
+  takeLoose(o, d, len) {
+    const it = this.game.finds.inReach(o, d, len);
+    if (!it) return false;
+    if (!this.accepts(it.type)) {
+      this.leftBehind([it]);
+      return false;
+    }
+    if (this.bagCap - this.bag.length - this.incoming <= 0) return false;
+    it.taken = true;
+    this.flyIn(it);
+    return true;
+  }
+
+  /** The world-edge line (dig or walk), at most every EDGE_LINES.every seconds per player. */
+  sayEdge(text) {
+    if (this.edgeCd > 0) return;
+    this.edgeCd = EDGE_LINES.every;
+    this.edgeSaid = (this.edgeSaid || 0) + 1;
+    this.say(text, 3);
   }
 
   tryLadder() {
