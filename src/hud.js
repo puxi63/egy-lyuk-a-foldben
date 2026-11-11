@@ -14,6 +14,7 @@ import { SelectView } from './ui/select.js';
 import { bakeTextures } from './ui/textures.js';
 import { XpHud } from './xp/hud.js'; // NOTES-41-xp
 import { WheelView } from './wheel/view.js'; // NOTES-43-wheel
+import { GUIDE, StationBadge, Stations, stationsOf } from './stations.js'; // NOTES-46-stations
 
 const fmt = (n) => n.toLocaleString('hu-HU', { maximumFractionDigits: 1, minimumFractionDigits: 1 });
 
@@ -188,6 +189,10 @@ export class Hud {
     this.pt = { mode: 'off', x: 0, y: 0, ang: 0, dist: 0, dz: 0, opacity: 0 };
     // NOTES-41-xp: the level plaque under the name plate and the level-up notice.
     this.xpHud = new XpHud(this.q('.hud-in'), this.r.nm.parentElement);
+    // NOTES-46-stations: the main-station guide's badge (left, under the plate) and its 10 Hz timer.
+    this.station = new StationBadge(this.q('.hud-in'));
+    this.stNext = 0;
+    this.stShown = false; // QA / the one-time hint: the badge is up
     this.lastBag = 0;
     this.deepest = -1; // deepest layer index reached (for the layer banner)
   }
@@ -436,6 +441,7 @@ export class Hud {
     this.updateDeath(p, game);
     this.updatePartner(game, slot);
     this.updateTap(game, slot);
+    this.updateStation(game, slot);
     this.xpHud.update(p, !!game.screens?.menuWas?.[slot]); // NOTES-41-xp
 
     // Shop.
@@ -582,6 +588,38 @@ export class Hud {
     const vert = cue.dy < -2 ? ' ↓' : cue.dy > 2 ? ' ↑' : '';
     this.set('tpTx', `${cue.dist}${vert}`, () => (this.r.tpTx.textContent = `kb. ${cue.dist} m${vert}`));
     this.set('tpOp', Math.round(Math.min(1, cue.t / 1.5) * 20), (v) => (this.r.tp.style.opacity = (v / 20).toFixed(2)));
+  }
+
+  /**
+   * NOTES-46-stations: the main-station guide, at most GUIDE.hz times a second. Every tick notes the stations this
+   * player stands in (even with the guide switched off), then shows the nearest unvisited station of his layer: hidden
+   * when switched off (Beállítások), on the surface, in Bag End, while a menu, ride, minigame or scene holds him
+   * (game.screens.menuWas, written just before this update), under a full-window screen, the title or the finale's
+   * scenes, while he chooses a character or lies fainted, and once every station of the layer is visited.
+   */
+  updateStation(game, slot) {
+    const now = performance.now();
+    if (now < this.stNext) return;
+    this.stNext = now + 1000 / GUIDE.hz;
+    const p = this.player;
+    if (p.choosing) {
+      this.stShown = false;
+      this.station.hide();
+      return;
+    }
+    const st = stationsOf(game);
+    st.noteVisits(p);
+    const show = st.on && p.dead <= 0 && !game.screens?.menuWas?.[slot] && !game.screens?.busy
+      && !(game.screens?.titleUp && game.screens.enabled) && game.finale?.stage !== 'scene';
+    const gd = show ? st.guide(p, slot) : null;
+    this.stShown = !!gd;
+    if (!gd) {
+      this.station.hide();
+      return;
+    }
+    this.station.show(gd);
+    // The first time the badge appears for this player (once per device; a second player in the same session too).
+    if (st.wantsHint(slot) && game.tutorial?.note?.(p, Stations.hintHtml(), 14)) st.hintShown(slot);
   }
 
   updateMessages(p) {
