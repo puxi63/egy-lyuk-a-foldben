@@ -8,9 +8,11 @@
  *   - Osztott képernyő egymás mellett: the split direction (the F3 key toggles it too; game.split 'v' / 'h').
  *   - Zene véletlen sorrendben: shuffle of the music lists (audio.js Music.setShuffle; NOTES-30-music).
  *   - Következő zeneszám: an action row (a page of a song book turned by a brass tab): skips to the next track.
+ *   - Fő állomások jelzője: the main-station guide's badge in every HUD (stations.js, NOTES-46-stations; on by default).
  * Controls: up / down choose a row, left / right turn a knob (or flip a candle), A / Enter / Space flip a candle,
  * B / Esc / Backspace go back. With the mouse: click a knob's left or right half, scroll over it, click a candle. ==== */
 import { effectsLevel, readSettings, setEffectsLevel, shuffleSetting, writeSettings } from '../audio.js';
+import { guideSetting, setGuideSetting } from '../stations.js';
 
 /** Look speed: knob 0..1 → multiplier ×0.5 … ×2 (the default ×1 sits at one third). */
 const lookOf = (v) => 0.5 + 1.5 * v;
@@ -126,6 +128,12 @@ export class SettingsView {
         id: 'nexttrack', kind: 'action', label: 'Következő zeneszám', get: () => game.music?.trackName() || null,
         set: () => game.screens?.skipTrack(),
         fmt: (v) => (v ? `most szól: ${v} · Z / LB + View` : 'Z billentyű · kontrolleren LB + View'),
+      },
+      // NOTES-46-stations: the main-station guide (per device; the row after the old ones, so their places stay).
+      {
+        id: 'guide', kind: 'candle', label: 'Fő állomások jelzője', get: () => guideSetting(game),
+        set: (v) => setGuideSetting(game, v),
+        fmt: (v) => (v ? 'ég: a tábla a réteg következő fő helyszínére mutat' : 'nem ég: nincs jelzőtábla'),
       },
     ];
     el.className = 'scr scr-settings';

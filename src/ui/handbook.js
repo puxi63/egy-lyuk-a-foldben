@@ -20,7 +20,8 @@
    - NOTES-45-final-docs: entries for the features of TODO items 27–36 (the partner marker, the charge and the Eagles,
      wall tapping, Balin's map, the lamp shimmer, Bilbo's party, the dwarf smith, XP and skills, the hired dwarves, the
      action wheel, the pickup filter, the world's edge), a seventh chapter "Hősök és képességek", and the key tables
-     brought in step with input.js (wheel 2 / 9 / LB, tap 1 / Ö / LB + RS). ==== */
+     brought in step with input.js (wheel 2 / 9 / LB, tap 1 / Ö / LB + RS).
+   - NOTES-46-stations: the main-station guide's entry (Hősök › A gödörben), its stations per reached layer. ==== */
 import { BAG_TIERS, COOP, FINDERS, HUNGER, LADDER_LEN, SHOP, TOOL_TIERS } from '../config.js';
 import { CHARGE, EAGLE_MAX, EAGLE_PRICE, ROCKET_MAX, ROCKET_PRICE } from '../exits.js';
 import { EDGE, EDGE_LINES } from '../edge.js';
@@ -34,6 +35,7 @@ import { WHEEL } from '../wheel/index.js';
 import { MAX_RANK, SKILLS, XP_GAIN } from '../xp/config.js';
 import { levelStart } from '../xp/index.js';
 import { LIFT_STOPS } from '../lift.js';
+import { STATIONS } from '../stations.js';
 import { LAYER_NAMES, LAYER_TOPS } from '../materials.js';
 import { ARMOUR_SHOP_MAX, ARMOUR_TIERS } from '../enemies/armour.js';
 import { COMBAT } from '../enemies/combat.js';
@@ -143,12 +145,12 @@ export function gatherState(game) {
     lamp: fs.lamp | 0,
     party: party ? { stages: party.stages | 0, done: !!party.done } : { stages: 0, done: false },
     partyMet: doneLike('shire-party') || (party?.stages | 0) > 0,
-    smith: present.map((q) => {
-      const s = smith?.slots?.[g.players.indexOf(q)];
-      return { name: q.ch?.name || 'Játékos', levels: s && s.c === q.ch?.id ? s.l : [] };
-    }),
+    // The smith's levels are the company's, shared by every player and character (smith/index.js `shared`).
+    smithLevels: Array.isArray(smith?.shared) ? smith.shared.slice() : [],
     hired: [...(g.hirelings?.hired?.keys?.() || [])],
     heroes: present.map((q) => ({ name: q.ch?.name || '', id: q.ch?.id, xp: Math.round(q.xp?.xp || 0), level: q.xp?.level || 1, free: q.xp?.free || 0 })),
+    // NOTES-46-stations: the main stations visited (read only: `game.stations` if it exists, else the journal's copy).
+    stations: new Set(g.stations ? [...g.stations.visited] : g.journal?.stationsSave || []),
   };
 }
 
@@ -364,15 +366,15 @@ function shopEntries(add, game, S) {
   /* NOTES-40-smith: the travelling dwarf smith (his forge stands by the counter from the start). */
   const FX_NAMES = { power: 'ásóerő', swing: 'ütésidő', lampReach: 'hatótáv', lampBoost: 'fényerő', bag: 'zsák', climb: 'mászás', hunger: 'éhezés' };
   add(C, 'A törpe kovács', true, () => {
-    const lv = (q) => UPGRADES.map((u, k) => `${u.name} ${q.levels[k] | 0}`).join(', ');
+    const lv = UPGRADES.map((u, k) => `${u.name} ${S.smithLevels[k] | 0}`).join(', ');
     return {
       title: 'A törpe kovács',
       meta: 'a pulttól keletre · végtelen fejlesztés',
       body: p('A Zöld Sárkány pultjától keletre, a dűlőút túloldalán egy vándorló törpe kovács nyitott műhelyt: sok törpe kovácsmunkából élt, amióta elhagyták a Hegyet. Az üllőnél a használat gombbal nyílik a fejlesztések listája.')
         + p(`Öt fejlesztés van, mindegyik <b>végtelen sok szintre</b> fejleszthető. Minden szint ${pct(SMITH.growth - 1)}-kal drágább az előzőnél, és egyre kevesebbet ad hozzá: a hatás közelít egy felső határhoz, de sosem éri el.`)
         + ul(UPGRADES.map((u) => `<b>${u.name}</b> (${u.base} aranytól): ${u.desc} Legfeljebb ${u.fx.map((f) => `${FX_NAMES[f.key] || ''} ${f.cap > 0 ? '+' : '−'}${pct(Math.abs(f.cap))}`).join(', ')}.`))
-        + p(`A fejlesztés mindenkinek a sajátja (a választott hősé; másik hősnek nulláról indul), de a közös erszényből fizettek. Ketten játszva az árak ×${num(COOP.price)}, a hírnév nem csökkenti őket. Ugyanazt a fejlesztést egymás után többször is megrendelheted: a kijelölés rajta marad.`)
-        + (S.smith.length ? ul(S.smith.map((q) => `${q.name}: ${lv(q)}`)) : ''),
+        + p(`A fejlesztés közös: egyszer kell megvenni, és mindkettőtökre (minden hősre) érvényes; a közös erszényből fizettek. Ketten játszva az árak ×${num(COOP.price)}, a hírnév nem csökkenti őket. Ugyanazt a fejlesztést egymás után többször is megrendelheted: a kijelölés rajta marad.`)
+        + (S.smithLevels.some((v) => v > 0) ? p(`<b>Most:</b> ${lv}`) : ''),
     };
   });
   /* NOTES-42-hirelings: seven of Thorin's company hired at the counter (the row is offered from the start). */
@@ -605,7 +607,17 @@ function heroEntries(add, S) {
     title: 'Kopogtatás a falon',
     meta: '1 · Ö · LB + jobb kar benyomása · Akciókerék',
     body: p(`Lent a gödörben fordulj a falnak (legfeljebb ${num(FINDERS.tap.reach, 1)} m-re), és kopogtass: <b>1</b> (a 2. játékosnak <b>Ö</b>; kontrolleren tartsd az LB-t, és nyomd be a jobb kart), vagy válaszd az Akciókerékből. A visszhang megmondja, merre és nagyjából milyen messze van a rétegen a legközelebbi üreg, pince vagy terem (a saját alagutaitokat és azt az üreget, amiben állsz, nem számítja): „Üregesen kong… balra, kb. 12 m”, és a célkereszt körül egy gyűrű nyila is arra mutat.`)
-      + p(`Ingyenes, de zajos${hear ? `: ${hear} meghallják, a kincstárban Szmaug is` : ''}. Utána ${FINDERS.tap.cooldown} másodpercig zúg a fal, addig nem kopogtathatsz újra. Ha a rétegen nincs üreg: „Tömören szól a fal”.`),
+      + p(`Ingyenes, de zajos${hear ? `: ${hear} meghallják, a kincstárban Szmaug is` : ''}. Utána ${FINDERS.tap.cooldown} másodpercig zúg a fal, addig nem kopogtathatsz újra. Ha a rétegen nincs üreg: „Tömören szól a fal”.`)
+      + p('A visszhang bármilyen üregre felel, a kis zugokra is. A réteg fő helyszíneit (pincék, barlangok, csarnokok) a bal oldali tábla, a Fő állomások jelzője mutatja.'),
+  }));
+  // NOTES-46-stations: the main-station guide (the badge is there from the first metre underground).
+  add(C, 'A gödörben', true, () => ({
+    title: 'Fő állomások jelzője',
+    meta: 'bal oldali tábla · Beállítások › Fő állomások jelzője',
+    body: p('Lent a gödörben a képernyőd bal oldalán, a tányér alatt egy pergamentábla mutatja a réteg legközelebbi fő helyszínét, ahol még egyikőtök sem járt. A nyíl a nézésedhez képest mutat arra (felfelé: előtted), mellette a hely neve, a vízszintes távolság („14 m”) és a szintkülönbség („↓ 6 m”: ennyivel lejjebb van, „↑”: feljebb, vagy „egy szinten”). Ha a hely szinte pontosan alattad vagy fölötted van, a nyíl helyén ↓ vagy ↑ áll.')
+      + p('Amint valamelyikőtök belép egy ilyen helyre, az megjártnak számít (a játék el is menti), és a tábla a következőre mutat; ha a réteg minden fő helyszínén jártatok, eltűnik. Ketten játszva mindenkinek saját táblája van, a saját rétegén. A felszínen, Zsáklakban, menükben és jelenetekben nincs tábla. A Beállításokban kapcsolhatod ki (Fő állomások jelzője); ezt a gép jegyzi meg, a mentéstől külön.')
+      + p('A fő helyszínek rétegenként (csak ahová már leértetek):')
+      + ul(STATIONS.map((list, l) => (S.reached(l) ? `${ROMAN[l]}. réteg: ${list.map((st) => (S.stations.has(st.id) ? `${st.name} <i>(megjártátok)</i>` : st.name)).join(', ')}` : LOCKED))),
   }));
   // NOTES-44-pickup-edge: the world's edge (on Thrór's map from the start, the fence round the meadow).
   const side = Math.round(EDGE.x1 - EDGE.x0 + 1);
@@ -675,7 +687,8 @@ function controlEntries(add) {
     title: 'Thrór térképe',
     meta: 'B · Ú · bal kar benyomva',
     body: p('A térkép a gödör keresztmetszetét mutatja rétegenként, a ti helyetekkel és mélységetekkel (ketten játszva a köztetek lévő távolsággal is). Megnyitja: <b>B</b> (a 2. játékosnak <b>Ú</b>; kontrolleren a bal kar benyomása), vagy a szünet menü Térkép sora.')
-      + p('A megvett rétegeken Balin alaprajzai is látszanak (a réteg összes ürege és terme); ha Ori dolgozik nálatok, vörös tintával az ő térképe is: amerre már jártatok. A gödör két oldalán és alján satírozott kősáv jelzi a világ szélét.'),
+      + p('A megvett rétegeken Balin alaprajzai is látszanak (a réteg összes ürege és terme); ha Ori dolgozik nálatok, vörös tintával az ő térképe is: amerre már jártatok. A gödör két oldalán és alján satírozott kősáv jelzi a világ szélét.')
+      + p('A réteg fő helyszínei felé a játék közben a bal oldali tábla, a Fő állomások jelzője vezet.'),
   }));
   add(C, '', true, () => ({
     title: 'Képernyők és menük',

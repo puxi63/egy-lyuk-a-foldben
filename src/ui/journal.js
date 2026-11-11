@@ -337,16 +337,22 @@ export class Journal {
     // NOTES-38-finders: Balin's layer maps and the lamp shimmer tier ride in this object as the optional `finders` field
     // (finders.js state(); absent when nothing was bought, and a save without it starts with none).
     const finders = this.game.finders ? this.game.finders.state() : this.findersSave;
-    if (!this.marks.size && !this.seen.size && !finders) return undefined;
+    // NOTES-46-stations: the main stations visited ride here too, as the optional `stations` list of ids (stations.js
+    // state(); absent when none was visited, and a save without it starts with none visited).
+    const stations = this.game.stations ? this.game.stations.state() : this.stationsSave;
+    if (!this.marks.size && !this.seen.size && !finders && !stations?.length) return undefined;
     const out = { marks: [...this.marks] };
     if (this.seen.size) out.seen = [...this.seen]; // NOTES-31-handbook (optional field)
     if (finders) out.finders = finders;
+    if (stations?.length) out.stations = stations;
     return out;
   }
 
   restore(s) {
     // NOTES-38-finders: kept for finders.js (created later, with the first player: findersOf reads it).
     if (s?.finders && typeof s.finders === 'object') this.findersSave = s.finders;
+    // NOTES-46-stations: kept for stations.js (created with the first HUD update: stationsOf reads it).
+    if (Array.isArray(s?.stations) && s.stations.length) this.stationsSave = s.stations.filter((id) => typeof id === 'string');
     for (const m of s?.marks || []) this.marks.add(m);
     for (const id of s?.seen || []) if (typeof id === 'string') this.seen.add(id);
   }
