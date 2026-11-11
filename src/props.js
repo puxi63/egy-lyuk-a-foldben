@@ -17,6 +17,15 @@ import { buildSky, buildSmoke } from './surface/sky.js';
 import { surfaceHeight } from './world-gen.js';
 import { sdf } from './world.js';
 
+/**
+ * NOTES-48-ladder-down: stepping down onto a ladder from its top and staying on it. `reach`: how far (horizontally) from
+ * the ladder a body at its top may grab it with the climb-down key; the top may be `above` m over the feet or `below`
+ * (negative) under them. While climbing the body is kept within `hold` m of a point `side` m in front of the ladder
+ * (on the climber's side, away from what it leans on; it slid off over open drops before), pulled back in at `pull`
+ * per s; near the top (`free` m) climbing up towards what the ladder leans on, it may step off.
+ */
+export const LADDER_TOP = { reach: 1.05, above: 0.9, below: -0.35, hold: 0.12, side: 0.42, pull: 5, free: 0.5 };
+
 /** Where the counter of the Zöld Sárkány stands (the shop opens within 3.2 m), and where players respawn. */
 export const SHOP_POS = new THREE.Vector3(5.5, 0, 16.5);
 export const SPAWN_POS = new THREE.Vector3(0, 0.05, 15);
@@ -259,7 +268,9 @@ export class Ladders {
 
   /** Adds a fixed, climbable ladder segment { x, y, z, yaw } (foot at y, LADDER_LEN tall; drawn elsewhere; no cap). */
   addFixed(l) {
-    this.fixed.push({ x: l.x, y: l.y, z: l.z, yaw: l.yaw, len: LADDER_LEN, top: l.y + LADDER_LEN, fixed: true });
+    // (bx, bz): the horizontal unit direction from the ladder to what it leans on (NOTES-48-ladder-down); a fixed
+    // ladder's yaw (goblin-pieces.js: the climber's facing + π as a model yaw) points there.
+    this.fixed.push({ x: l.x, y: l.y, z: l.z, yaw: l.yaw, len: LADDER_LEN, top: l.y + LADDER_LEN, fixed: true, bx: Math.sin(l.yaw), bz: Math.cos(l.yaw) });
   }
 
   /** How long a ladder with its foot at (x, y, z) may be under the height cap (LADDER_LEN at most; ≤ 0: none). */
@@ -280,7 +291,8 @@ export class Ladders {
       if (len < LADDER_CAP.short) return false;
     } else len = Math.max(LADDER_CAP.short, Math.min(LADDER_LEN, len));
     const yaw = Math.atan2(n.x, n.z);
-    this.list.push({ x: p.x, y: p.y, z: p.z, yaw, len, top: p.y + len });
+    // (bx, bz): towards the wall it leans on (the outward normal reversed; NOTES-48-ladder-down).
+    this.list.push({ x: p.x, y: p.y, z: p.z, yaw, len, top: p.y + len, bx: -Math.sin(yaw), bz: -Math.cos(yaw) });
     ladderM.compose(ladderP.set(p.x, p.y, p.z), ladderQ.setFromAxisAngle(UP, yaw), ladderS.set(1, len / LADDER_LEN, 1));
     this.mesh.setMatrixAt(this.list.length - 1, ladderM);
     this.mesh.count = this.list.length;
@@ -297,6 +309,33 @@ export class Ladders {
     this.mesh.count = 0;
     for (const l of keep) this.add(l, { x: Math.sin(l.yaw), z: Math.cos(l.yaw) }, l.len);
     return removed;
+  }
+
+  /**
+   * NOTES-48-ladder-down: the ladder whose top a body standing at (x, y, z) can step down onto (the climb-down key at a
+   * ladder's top: within LADDER_TOP.reach horizontally, the top a little above or below the feet), the nearest, or null.
+   * Goblin-town's ladders stand clear of the deck / ledge they lead to, out of near()'s reach from there.
+   */
+  nearTop(x, y, z) {
+    let best = null;
+    let bestD = LADDER_TOP.reach;
+    for (const arr of [this.list, this.fixed]) {
+      for (const l of arr) {
+        const dy = l.top - y;
+        if (dy < LADDER_TOP.below || dy > LADDER_TOP.above) continue;
+        const d = Math.hypot(x - l.x, z - l.z);
+        if (d < bestD) {
+          bestD = d;
+          best = l;
+        }
+      }
+    }
+    return best;
+  }
+
+  /** NOTES-48-ladder-down: may a climber at (x, y, z) keep holding ladder `l` (a wider band than near(), while pulled in)? */
+  holds(l, x, y, z) {
+    return Math.hypot(x - l.x, z - l.z) < LADDER_TOP.reach + 0.1 && y > l.y - 0.6 && y < l.top + 0.6;
   }
 
   /** The ladder a body at (x, y, z) can hold on to, or null (up to 0.2 m over its top: no climbing past the cap). */

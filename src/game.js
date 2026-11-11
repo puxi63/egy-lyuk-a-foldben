@@ -52,6 +52,8 @@ import { HomeEvents } from './home-events/index.js';
 import { Modes } from './modes/index.js';
 // shire (NOTES-26-shire): mathoms and the neighbour, the seven meals, the vegetable patch, Bilbo's acorn.
 import { Shire } from './shire/index.js';
+// NOTES-47-station-uses: a reason to be at every main station (the use key at its spot, once a game day).
+import { stationUsesOf } from './station-uses/index.js';
 // screens (NOTES-21-screens): the shared pause, the settings desk, the credits.
 import { Screens } from './ui/screens.js';
 import { layerAtDepth } from './materials.js';
@@ -532,6 +534,7 @@ export class Game {
         menuOpen = this.huds[i].shopInput(it, this, nearShop);
         // journal (NOTES-9-journal): its key opens it only here, with no other menu open.
         if (!menuOpen && this.journal.tryOpen(p, i, it)) menuOpen = true;
+        if (!menuOpen) stationUsesOf(this).input(p, i, it); // NOTES-47-station-uses: the use key at a station's spot
         if (!menuOpen) this.exits.input(p, i, it);
         if (!menuOpen) this.safety.input(p, i, it); // safety (NOTES-11-safety): the rope key
         if (!menuOpen) this.enemies.input(p, i, it);
@@ -575,6 +578,7 @@ export class Game {
     this.minigames.update(dt); // minigames (NOTES-13-minigames)
     this.homeEvents.update(dt); // home-events (NOTES-14-bagend-events)
     this.shire.update(dt); // shire (NOTES-26-shire): meals, trades, the garden, the acorn
+    stationUsesOf(this).update(dt); // NOTES-47-station-uses: the prompts at the stations' spots (10 Hz)
     this.modes.update(dt); // modes (NOTES-15-modes): Kihívás harms and death, Versengés, the hired dwarf
     this.digfx.update(dt);
     this.intents.length = this.players.length;

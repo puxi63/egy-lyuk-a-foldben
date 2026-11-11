@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { BAG_TIERS, HUNGER, LADDER_LEN, ORIGIN, PLAYER, TOOL_TIERS } from './config.js';
 import { materialAt, MATS } from './materials.js';
 import { digSphere, normalAt, raycast, sdf } from './world.js';
-import { clearLadderSpot, LADDER_CAP, pushOutOfSurface, SPAWN_POS } from './props.js';
+import { clearLadderSpot, LADDER_CAP, LADDER_TOP, pushOutOfSurface, SPAWN_POS } from './props.js';
 import { CharacterBody, viewForearm } from './characters.js';
 import { armourAsset, armourOf } from './enemies/armour.js';
 import { waterStep } from './underground/lake-water.js';
@@ -406,23 +406,61 @@ export class Player {
       wz /= wl;
     }
     const inside = !!this.game.bagEnd?.isInside(this);
-    const ladder = this.game.ladders.near(this.pos.x, this.pos.y, this.pos.z);
+    const lads = this.game.ladders;
+    let ladder = lads.near(this.pos.x, this.pos.y, this.pos.z);
+    // NOTES-48-ladder-down: a climber keeps the ladder he holds while pulled in to it (a wider band than near()); the
+    // climb-down key at a ladder's top grabs it from the deck / ledge / rim beside it (Goblin-town's ladders stand clear
+    // of what they lead to, so near() never reached them from there and stepping onto them dropped the player).
+    if (!ladder && this.climbing && this.ladderRef && lads.holds(this.ladderRef, this.pos.x, this.pos.y, this.pos.z)) ladder = this.ladderRef;
+    if (!ladder && !this.climbing && this.grounded && it.climbDown && !this.carrying && !menuOpen) ladder = lads.nearTop(this.pos.x, this.pos.y, this.pos.z);
+    // NOTES-48-ladder-down: falling past a ladder catches it.
+    const catching = !!ladder && !this.grounded && this.vel.y < -2.5;
     // (coop-actions, NOTES-23-coop-actions: no ladders while carrying the heavy chest.)
-    this.climbing = !!ladder && !this.carrying && (mz > 0.3 || it.jumpHeld || it.climbDown || this.climbing) && !(this.grounded && mz < -0.3);
+    this.climbing = !!ladder && !this.carrying && (mz > 0.3 || it.jumpHeld || it.climbDown || this.climbing || catching) && !(this.grounded && mz < -0.3);
+    this.ladderRef = this.climbing ? ladder : null;
     if (this.climbing && ladder) {
-      // On a ladder: up with forward or jump, down with back or crouch; no gravity.
-      const up = (mz > 0.3 || it.jumpHeld ? 1 : 0) - (mz < -0.3 || it.climbDown ? 1 : 0);
-      this.vel.set(wx * 0.6, up * PLAYER.climb * this.perk.climb, wz * 0.6);
+      // On a ladder: up with forward or jump, down with back or crouch; no gravity. The climb-down key wins over forward
+      // (NOTES-48-ladder-down: a stick pushed towards the ladder while holding LB / C cancelled the descent).
+      const up = it.climbDown ? -1 : (mz > 0.3 || it.jumpHeld ? 1 : 0) - (mz < -0.3 ? 1 : 0);
+      let hx = wx * 0.6;
+      let hz = wz * 0.6;
+      // NOTES-48-ladder-down: stepping forward over the top is only a way off when it leads to the side the ladder leans
+      // on (its wall, deck or ledge); facing away from it (stepped onto the ladder from above) forward stops at the top.
+      const bx = ladder.bx ?? 0;
+      const bz = ladder.bz ?? 0;
+      const toBacking = -sin * bx - cos * bz > 0.2;
+      const exiting = up > 0 && this.pos.y > ladder.top - LADDER_TOP.free && toBacking;
+      // NOTES-48-ladder-down: the climber stays on the ladder (no drifting off over a drop with back held): further than
+      // LADDER_TOP.hold from the spot just in front of it he is pulled in; stepping off is at the foot (back on the
+      // ground) or over the top.
+      if (!exiting) {
+        const ox = this.pos.x - (ladder.x - bx * LADDER_TOP.side);
+        const oz = this.pos.z - (ladder.z - bz * LADDER_TOP.side);
+        const d = Math.hypot(ox, oz);
+        if (d > 1e-4) {
+          const ux = ox / d;
+          const uz = oz / d;
+          const out = hx * ux + hz * uz;
+          if (d >= LADDER_TOP.hold && out > 0) {
+            hx -= out * ux;
+            hz -= out * uz;
+          }
+          if (d > LADDER_TOP.hold) {
+            const pull = Math.min((d - LADDER_TOP.hold) * LADDER_TOP.pull, 2.5);
+            hx -= ux * pull;
+            hz -= uz * pull;
+          }
+        }
+      }
+      this.vel.set(hx, up * PLAYER.climb * this.perk.climb, hz);
       if (up > 0) this.addHunger(-HUNGER.perClimbSecond * dt);
       // At the top (a capped ladder's top too, NOTES-32-ladder-coop): stepping forward hops off it; climbing up alone
       // stops there (no hop into the air and fall back), unless another ladder continues above.
       if (this.pos.y > ladder.top - 0.1 && up > 0) {
-        if (mz > 0.3) this.vel.y = PLAYER.jump * 0.6;
-        else {
-          const next = this.game.ladders.near(ladder.x, ladder.top + 0.3, ladder.z);
-          if (next && next !== ladder) this.vel.y = PLAYER.jump * 0.6;
-          else this.vel.y = 0;
-        }
+        const next = this.game.ladders.near(ladder.x, ladder.top + 0.3, ladder.z);
+        if (next && next !== ladder) this.vel.y = PLAYER.jump * 0.6;
+        else if (mz > 0.3 && toBacking) this.vel.y = PLAYER.jump * 0.6;
+        else this.vel.y = 0;
       }
     } else {
       // After a shove the push carries (weak steering); Bombur's charge runs straight ahead (enemies/combat.js).
