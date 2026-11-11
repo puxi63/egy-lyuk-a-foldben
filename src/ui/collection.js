@@ -25,6 +25,10 @@ const TROPHIES = [
   { id: 'mithril', note: 'Thorin ajándéka Bilbónak' },
   { id: 'thror-kulcs', name: 'Thrór kulcsa', layer: 7, note: 'Durin ajtajának kulcsa' },
   { id: 'arkenko', note: 'a Hegy Szíve' },
+  // NOTES-45-final-docs: the two trophies that come from no layer. `place` replaces the layer name; `only` hides the row
+  // until it may be known (the Red Book is Kihívás's end trophy: listed in Kihívás or once it is in the case).
+  { id: 'tukkacat', place: 'A Megye', note: 'Bilbó ünnepségének emléke a Mulatórétről' }, // NOTES-39-party
+  { id: 'piros-konyv', name: 'Bilbó Piros Könyve', color: 0xa02a24, place: 'Kihívás', note: 'a Kihívás teljesítéséért', only: (g) => !!g.enemies?.challenge }, // finale/index.js finish()
 ];
 
 /** Deterministic 0..1 noise from an integer (positions in the sack stay put between openings). */
@@ -231,9 +235,9 @@ export class CollectionView {
   /** The rows: [{ id, name, layer, note, has }]. */
   rows() {
     const have = new Set(this.game.bagEnd?.trophies || []);
-    return TROPHIES.map((t) => {
+    return TROPHIES.filter((t) => !t.only || have.has(t.id) || t.only(this.game)).map((t) => {
       const f = FIND_TYPES.find((x) => x.id === t.id);
-      return { id: t.id, name: t.name || f?.name || t.id, layer: t.layer ?? f?.layer ?? 0, note: t.note, color: f?.color, has: have.has(t.id) };
+      return { id: t.id, name: t.name || f?.name || t.id, layer: t.layer ?? f?.layer ?? 0, place: t.place, note: t.note, color: f?.color ?? t.color, has: have.has(t.id) };
     });
   }
 
@@ -241,9 +245,12 @@ export class CollectionView {
     const g = this.game;
     const rows = this.rows();
     const n = rows.filter((r) => r.has).length;
-    const li = rows.map((r) => `<li class="${r.has ? 'has' : ''}" data-id="${r.id}">
+    const li = rows.map((r) => {
+      const where = r.place || LAYER_NAMES[r.layer] || '';
+      return `<li class="${r.has ? 'has' : ''}" data-id="${r.id}">
       <i style="${r.has ? `background:${hex(r.color, '#c8a04a')}` : ''}"></i>
-      <span><b>${r.has ? r.name : '……………'}</b><small>${r.has ? `${r.note} · ${LAYER_NAMES[r.layer] || ''}` : `${LAYER_NAMES[r.layer] || ''} · még nincs a vitrinben`}</small></span></li>`).join('');
+      <span><b>${r.has ? r.name : '……………'}</b><small>${r.has ? `${r.note} · ${where}` : `${where} · még nincs a vitrinben`}</small></span></li>`;
+    }).join('');
     const bonus = g.bagEnd?.effects?.mathomSellBonus ?? 1;
     this.el.innerHTML = `<div class="cl-room">
       <div class="pbook cl-book">

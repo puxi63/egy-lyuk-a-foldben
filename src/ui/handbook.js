@@ -16,11 +16,23 @@
      Keyboard: a search box (case- and accent-insensitive) that has the focus when a keyboard player opens it, arrows
      to browse. Pad: left / right chapters, up / down entries, B back.
    - COST: nothing while closed (no DOM, no listener, no timer); the state is gathered and the DOM is built when it
-     opens; while open, the DOM changes only on input (the game is frozen meanwhile). ==== */
-import { BAG_TIERS, COOP, HUNGER, LADDER_LEN, SHOP, TOOL_TIERS } from '../config.js';
-import { EAGLE_COOLDOWN, EAGLE_PRICE, ROCKET_MAX, ROCKET_PRICE } from '../exits.js';
-import { FIND_TYPES } from '../finds.js';
-import { SKIP_KEY } from '../input.js';
+     opens; while open, the DOM changes only on input (the game is frozen meanwhile).
+   - NOTES-45-final-docs: entries for the features of TODO items 27–36 (the partner marker, the charge and the Eagles,
+     wall tapping, Balin's map, the lamp shimmer, Bilbo's party, the dwarf smith, XP and skills, the hired dwarves, the
+     action wheel, the pickup filter, the world's edge), a seventh chapter "Hősök és képességek", and the key tables
+     brought in step with input.js (wheel 2 / 9 / LB, tap 1 / Ö / LB + RS). ==== */
+import { BAG_TIERS, COOP, FINDERS, HUNGER, LADDER_LEN, SHOP, TOOL_TIERS } from '../config.js';
+import { CHARGE, EAGLE_MAX, EAGLE_PRICE, ROCKET_MAX, ROCKET_PRICE } from '../exits.js';
+import { EDGE, EDGE_LINES } from '../edge.js';
+import { FIND_TYPES, PICKUP_CATS } from '../finds.js';
+import { SKIP_KEY, WHEEL_KEYS } from '../input.js';
+import { CHARACTERS } from '../player.js';
+import { DWARVES, GLEAN, HIRE, LANTERN, LIMIT_DEPTH, MAX_LAYER, ORI, STAIR } from '../hirelings/rules.js';
+import { STAGES } from '../party/index.js';
+import { SMITH, UPGRADES } from '../smith/index.js';
+import { WHEEL } from '../wheel/index.js';
+import { MAX_RANK, SKILLS, XP_GAIN } from '../xp/config.js';
+import { levelStart } from '../xp/index.js';
 import { LIFT_STOPS } from '../lift.js';
 import { LAYER_NAMES, LAYER_TOPS } from '../materials.js';
 import { ARMOUR_SHOP_MAX, ARMOUR_TIERS } from '../enemies/armour.js';
@@ -51,7 +63,7 @@ const FIND_NOTES = {
   dohany: 'A szomszéd hobbit is ezt adja egy mathomért cserébe.',
   almaspite: 'A szomszéd hobbit adja egy mathomért cserébe.',
   paradicsom: 'A földkupac melletti veteményesben terem.',
-  tukkacat: 'Az öreg Tuk nyári mulatságainak tűzijátékaiból (nem azonos Gandalf rakétájával a boltban).',
+  tukkacat: 'Az öreg Tuk nyári mulatságainak tűzijátékaiból (nem azonos Gandalf töltetével a boltban).',
 };
 
 /** Accent- and case-insensitive form for the search. */
@@ -65,6 +77,7 @@ const num = (x, d = 2) => x.toLocaleString('hu-HU', { maximumFractionDigits: d }
 const p = (t) => `<p>${t}</p>`;
 const ul = (rows) => `<ul>${rows.map((r) => `<li>${r}</li>`).join('')}</ul>`;
 const keyName = (code) => (code === 'KeyY' ? 'Z' : code.replace(/^Key/, ''));
+const digit = (code) => code.replace(/^Digit/, '');
 const layerLabel = (l) => (l >= 0 ? `${ROMAN[l]}. réteg · ${LAYER_NAMES[l]}` : 'a Megyéből');
 
 /* ------------------------------------------------------------------ the state the unlocks read */
@@ -93,6 +106,12 @@ export function gatherState(game) {
   const doneLike = (prefix) => [...done].some((d) => d === prefix || d.startsWith(`${prefix}-`));
   const M = g.shire?.mathoms;
   const home = g.homeEvents?.state?.() || g.save?.home || {};
+  // NOTES-45-final-docs: the state of the features of items 27–36 (all existing, saved state; nothing is created here:
+  // `game.finders` is read only when it exists, else the journal's saved copy of its purchases).
+  const fs = g.finders ? { maps: [...g.finders.maps], lamp: g.finders.lamp } : g.journal?.findersSave || {};
+  const party = g.shire?.party;
+  const smith = g.shire?.smith;
+  const present = g.players.filter((q) => !q.choosing);
   return {
     found,
     deepest,
@@ -117,6 +136,19 @@ export function gatherState(game) {
     comfort: g.bagEnd?.comfort ?? 0,
     lift: g.lift?.built || new Set(),
     coop: g.players.length > 1,
+    // NOTES-45-final-docs
+    partner: g.players.length > 1 || slots.length > 1,
+    pit: deepest >= 3 || slots.some((s) => (s.maxDepth || 0) >= 3),
+    maps: new Set(Array.isArray(fs.maps) ? fs.maps : []),
+    lamp: fs.lamp | 0,
+    party: party ? { stages: party.stages | 0, done: !!party.done } : { stages: 0, done: false },
+    partyMet: doneLike('shire-party') || (party?.stages | 0) > 0,
+    smith: present.map((q) => {
+      const s = smith?.slots?.[g.players.indexOf(q)];
+      return { name: q.ch?.name || 'Játékos', levels: s && s.c === q.ch?.id ? s.l : [] };
+    }),
+    hired: [...(g.hirelings?.hired?.keys?.() || [])],
+    heroes: present.map((q) => ({ name: q.ch?.name || '', id: q.ch?.id, xp: Math.round(q.xp?.xp || 0), level: q.xp?.level || 1, free: q.xp?.free || 0 })),
   };
 }
 
@@ -128,6 +160,7 @@ export const CHAPTERS = [
   { id: 'ellenseg', title: 'Ellenségek és védekezés', short: 'Ellenség' },
   { id: 'megye', title: 'A Megye élete', short: 'Megye' },
   { id: 'zsaklak', title: 'Zsáklak', short: 'Zsáklak' },
+  { id: 'hosok', title: 'Hősök és képességek', short: 'Hősök' }, // NOTES-45-final-docs
   { id: 'iranyitas', title: 'Irányítás', short: 'Irányítás' },
 ];
 
@@ -138,6 +171,7 @@ const LOCK_TEXT = [
   'Ezzel még nem találkoztatok. Ha egyszer szembejön, Bilbó beírja ide, hogyan védekezz.',
   'Ezt még nem élték meg a Megyében. Ha megtörténik, Bilbó beírja ide.',
   'Ez a darab még nincs meg Zsáklakban. Ha megveszitek, Bilbó beírja ide, mire jó.',
+  'Ezt még nem próbáltátok ki. Ha egyszer sorra kerül, Bilbó beírja ide.',
   '',
 ];
 
@@ -160,6 +194,7 @@ export function buildEntries(game, S) {
   foeEntries(add, game, S);
   shireEntries(add, S);
   bagEndEntries(add, S);
+  heroEntries(add, S);
   controlEntries(add);
   out.forEach((e, i) => {
     e.i = i;
@@ -204,8 +239,19 @@ function findEntries(add, S) {
     meta: 'eladás, zsák, árak',
     body: p('Amit kiásol, magától a zsákodba repül, amíg van benne hely. A zsák tartalmát a felszínen a <b>Zöld Sárkány</b> pultjánál adod el (a pult használat gombja), az arany a közös erszénybe kerül.')
       + p(`Az ár a lelet alapára, ezt módosítja: ketten játszva ×${num(COOP.sell)} (a bolt viszont ×${num(COOP.price)}), a hírnév szintenként +${pct(REP.sell)}, Zsáklak vitrinjei, a karakterek saját előnyei, és az alkalmi új vevők.`)
-      + p('Ha megtelik a zsák, a lelet a földön marad. Nagyobb zsákot a pultnál veszel.')
+      + p('Ha megtelik a zsák, a lelet ott marad: a falba zárt lelet a kiásott járatban lóg a levegőben, és ha később van hely, egy csákánycsapással beveszed. Nagyobb zsákot a pultnál veszel; a törpe kovács foltozással meg is toldja.')
       + (S.reached(6) ? p('Tóváros alatt Bárd is megveszi a leleteidet a standjánál.') : ''),
+  }));
+  // NOTES-44-pickup-edge: the pickup filter (always on the bag screen). The always-kept pieces are named only once found.
+  const always = ['fullank', 'gyuru', 'mithril', 'arkenko'].filter((id) => S.found.has(id)).map((id) => FIND_TYPES.find((f) => f.id === id)?.name).filter(Boolean);
+  add(C, 'Általában', true, () => ({
+    title: 'Mit veszel fel?',
+    meta: 'Szünet › Zsák › Felvétel',
+    body: p('Ásás közben a kiásott leletek maguktól a zsákodba repülnek. A Szünet menü <b>Zsák</b> lapján, alul, a <b>Felvétel</b> sávban mindenki a saját sorában kapcsolhatja ki, mit nem kér:')
+      + ul(PICKUP_CATS.map((c) => `<b>${c.label}</b> (${c.note})`))
+      + p('Billentyűzeten az <b>1–4</b> gomb kapcsolja (a billentyűzet jobb felén játszó társnak a <b>7, 8, 9, Ö</b>), kontrolleren az <b>Y</b> lépteti a jelet, az <b>X</b> kapcsol; egérrel kattints rá. Minden játékos csak a saját sorát állítja.')
+      + p(`A híres leleteket${always.length ? ` és ezeket: ${always.join(', ')}` : ' és a különleges, egyetlen darabos kincseket'} mindig felveszed.`)
+      + p('Amit otthagysz, azt a játék röviden jelzi („Krumpli: otthagytad (szűrő)”). A falba zárt lelet a helyén marad, és a kiásott járatban lóg a levegőben (a lámpa csillámja és a felbérelt törpék is látják); ha később mégis kell, kapcsold vissza, és üss rá a csákánnyal. Az ásás közben előbukkanó apróság, amit nem kérsz, a földben marad.'),
   }));
   add(C, 'Általában', has(MATHOM_IDS), () => ({
     title: 'Mathomok',
@@ -218,7 +264,8 @@ function findEntries(add, S) {
     title: 'Étel a zsákban',
     meta: 'harapnivaló, főzés',
     body: p('Néhány lelet ehető. <b>A zsákodból bármikor megeheted:</b> szünet (Esc / Start) → Zsák, fel / le kiválasztod az ételt, és A / Enter / Szóköz vagy a „Megeszem” gomb. A tányér telik, és ha épp egy étkezés ideje van, az időben evésnek számít (A Megye élete: a hét étkezés).')
-      + p('Ha egy étkezés feléig nem ettél, a hobbit magától is elővesz egy harapnivalót. A nyers krumpli keveset ér: Zsáklak konyhája a krumplit és a gombát megfőzi, főzve sokkal laktatóbb.') + listFound(foods, S),
+      + p('Ha egy étkezés feléig nem ettél, a hobbit magától is elővesz egy harapnivalót. A nyers krumpli keveset ér: Zsáklak konyhája a krumplit és a gombát megfőzi, főzve sokkal laktatóbb.')
+      + p('Gyorsabban: az <b>Akciókerék</b> Evés pontja (2 / 9 / LB nyomva tartva) a zsákod legjobban illő ételét eszi meg: a legtöbbet adót, ami még elfér a tányérodon.') + listFound(foods, S),
   }));
   const famous = FIND_TYPES.filter((f) => f.famous).map((f) => f.id);
   add(C, 'Általában', has(famous), () => ({
@@ -248,8 +295,9 @@ function shopEntries(add, game, S) {
   add(C, 'A pult', true, () => ({
     title: 'A Zöld Sárkány pultja',
     meta: 'a felszínen, a gödör mellett',
-    body: p('A pultnál adod el a zsák tartalmát, és itt veszel szerszámot, zsákot, létrát, elemózsiát, páncélt és Gandalf portékáit. Mindig a következő fokozatot kínálja.')
-      + p(`A hírnév szintenként ${pct(REP.price)}-kal olcsóbbá teszi a boltot.${coop}`),
+    body: p('A pultnál adod el a zsák tartalmát, és itt veszel szerszámot, zsákot, létrát, elemózsiát, páncélt, Gandalf portékáit, Balin térképét és a lámpa csillámját. Itt fogadhatsz fel törpéket is Thorin társaságából. Mindig a következő fokozatot kínálja; ha a sorok nem férnek el, a lista görgetve követi a kijelölést.')
+      + p(`A hírnév szintenként ${pct(REP.price)}-kal olcsóbbá teszi a boltot.${coop}`)
+      + p('A pulttól keletre, a dűlőút túloldalán a törpe kovács fejleszti a felszerelésedet (lásd: „A törpe kovács”).'),
   }));
   TOOL_TIERS.forEach((t, k) => add(C, 'Ásók és csákányok', k <= S.tool + 1, () => ({
     title: t.name,
@@ -275,16 +323,19 @@ function shopEntries(add, game, S) {
       + p(`Ásás, mászás és ugrás fogyasztja a tányért. Ára ${gold(SHOP.foodPrice)}; időben enni a Megye élete szerint is jó.`),
   }));
   add(C, 'Gandalf portékái', true, () => ({
-    title: 'Gandalf tűzijáték-rakétája',
+    title: 'Gandalf tűzijáték-töltete',
     meta: `${ROCKET_PRICE} arany · legfeljebb ${ROCKET_MAX}`,
-    body: p('Gyors kijutás a mélyből: elsütöd (kijutás gomb), és egy szempillantás alatt kilő a gödörből; fent sárkány alakú tűzijátékként robban.')
-      + p(`Csak ${num(2.5, 1)} m-nél mélyebbről működik (fentebb a létra gyorsabb). Egyszerre legfeljebb ${ROCKET_MAX} lehet nálad; darabja ${gold(ROCKET_PRICE)}.`),
+    body: p('Robbanótöltet Gandalf tűzijátékaiból. Guggolj le, és nyomd meg a kijutás gombját (C + R; a 2. játékosnak . + É; kontrolleren LB + D-pad fel): a töltet az előtted lévő falra vagy a lábad elé kerül, és meggyullad a kanóca.')
+      + p(`${num(CHARGE.fuse, 0)} másodperc múlva robban: kb. ${num(CHARGE.radius, 1)} m sugarú gömböt vág ki a földből és a kőből is. Aki ${num(CHARGE.harm, 1)} m-nél közelebb áll, azt ledönti és megsebzi (a tányérból fogy; Kihívás módban halálos is lehet). A dörrenést a goblinok és a trollok is meghallják, a kincstárban Szmaug is.`)
+      + p(`Zsáklakban, ${num(2.5, 1)} m-nél sekélyebben, a hordólift megállóinál és a védett helyeken nem robbanthatsz. Gandalf ajándékba is hoz belőle. Egyszerre legfeljebb ${ROCKET_MAX} lehet nálad; darabja ${gold(ROCKET_PRICE)}.`)
+      + p('Az <b>Akciókerékből</b> is meggyújthatod (2 / 9 / LB nyomva tartva, „Töltet”); a kanóc égése ott körként látszik.'),
   }));
-  add(C, 'Gandalf portékái', S.eagles || S.reached(2), () => ({
+  add(C, 'Gandalf portékái', true, () => ({
     title: 'A Sasok',
-    meta: `${EAGLE_PRICE} arany`,
-    body: p('Gandalf molylepkéjével hívod őket (kijutás gomb): egy sas bárhonnan kiemel a gödörből, és körözés után leszállít a felszínre. A közeli társadat is kiemelik.')
-      + p(`Egyszer kell megvenni (${gold(EAGLE_PRICE)}), utána ${EAGLE_COOLDOWN} másodpercenként hívhatod őket újra. A pult akkor kínálja, ha már jártál a trollok barlangjának mélységében.`),
+    meta: `${EAGLE_PRICE} arany hívásonként · legfeljebb ${EAGLE_MAX}`,
+    body: p('Gandalf molylepkéjével hívod őket (kijutás gomb: R; a 2. játékosnak É; kontrolleren D-pad fel): a Sasok bárhonnan azonnal kiemelnek a gödörből, és letesznek a fogadó melletti gyepen. A közeli társadat is kiemelik.')
+      + p(`Csak ${num(2.5, 1)} m-nél mélyebbről hívhatók (fentebb a létra is elég). Minden hívás egyszer használható; darabja ${gold(EAGLE_PRICE)}, egyszerre legfeljebb ${EAGLE_MAX} lehet nálad. A pult kezdettől árulja.`)
+      + p('Az <b>Akciókerékből</b> is hívhatod őket (2 / 9 / LB nyomva tartva, „Sasok”).'),
   }));
   add(C, 'Gandalf portékái', true, () => ({
     title: 'Gandalf hangja',
@@ -295,6 +346,74 @@ function shopEntries(add, game, S) {
     title: 'Balin becslése',
     meta: `${BALIN.price} arany · közös`,
     body: p('Egy jel a tányéron megmutatja, mennyi étel kell a hazaúthoz a mostani mélységből (létrán, vagy a közeli megépült liftmegállóig és onnan liftezve).'),
+  }));
+  /* NOTES-38-finders: Balin's layer map and the lamp shimmer (both offered by the counter from the start). */
+  add(C, 'Leletkeresés', true, () => ({
+    title: 'Balin térképe',
+    meta: `rétegenként ${FINDERS.maps[0]}–${FINDERS.maps[FINDERS.maps.length - 1]} arany · közös`,
+    body: p('A pultnál rétegenként megveheted Balin térképét: a sorban balra / jobbra választod a réteget. Csak olyan réteget kínál, ahová már leértetek, és amit még nem vettetek meg.')
+      + p('Thrór térképén (B; a 2. játékosnak Ú; kontrolleren a bal kar benyomása) a réteg sávjában megjelennek Balin kis alaprajzai: felülnézetből, északkal felfelé, mélységszeletenként a réteg összes ürege és terme, a mélységükkel.')
+      + ul(FINDERS.maps.map((pr, l) => (S.reached(l) ? `${ROMAN[l]}. réteg · ${LAYER_NAMES[l]}: ${pr} arany${S.maps.has(l) ? ' · megvettétek' : ''}` : LOCKED))),
+  }));
+  add(C, 'Leletkeresés', true, () => ({
+    title: 'Lámpa csillámja',
+    meta: `${FINDERS.lamp.length} fokozat · közös`,
+    body: p('A lámpád fényében a falba zárt leletek halványan átderengenek a földön: kis csillag a lelet színében, a távolsággal halványul. Csak a hatótávon belüli, még ki nem ásott leleteket mutatja, és csak a föld alatt. Ketten játszva mindenki a saját lámpája körül látja.')
+      + ul(FINDERS.lamp.map((t, k) => (k <= S.lamp ? `${ROMAN[k]}. fokozat: ${t.range} m-ről · ${t.price} arany${k < S.lamp ? ' · megvan' : ' <i>(következő)</i>'}` : LOCKED))),
+  }));
+  /* NOTES-40-smith: the travelling dwarf smith (his forge stands by the counter from the start). */
+  const FX_NAMES = { power: 'ásóerő', swing: 'ütésidő', lampReach: 'hatótáv', lampBoost: 'fényerő', bag: 'zsák', climb: 'mászás', hunger: 'éhezés' };
+  add(C, 'A törpe kovács', true, () => {
+    const lv = (q) => UPGRADES.map((u, k) => `${u.name} ${q.levels[k] | 0}`).join(', ');
+    return {
+      title: 'A törpe kovács',
+      meta: 'a pulttól keletre · végtelen fejlesztés',
+      body: p('A Zöld Sárkány pultjától keletre, a dűlőút túloldalán egy vándorló törpe kovács nyitott műhelyt: sok törpe kovácsmunkából élt, amióta elhagyták a Hegyet. Az üllőnél a használat gombbal nyílik a fejlesztések listája.')
+        + p(`Öt fejlesztés van, mindegyik <b>végtelen sok szintre</b> fejleszthető. Minden szint ${pct(SMITH.growth - 1)}-kal drágább az előzőnél, és egyre kevesebbet ad hozzá: a hatás közelít egy felső határhoz, de sosem éri el.`)
+        + ul(UPGRADES.map((u) => `<b>${u.name}</b> (${u.base} aranytól): ${u.desc} Legfeljebb ${u.fx.map((f) => `${FX_NAMES[f.key] || ''} ${f.cap > 0 ? '+' : '−'}${pct(Math.abs(f.cap))}`).join(', ')}.`))
+        + p(`A fejlesztés mindenkinek a sajátja (a választott hősé; másik hősnek nulláról indul), de a közös erszényből fizettek. Ketten játszva az árak ×${num(COOP.price)}, a hírnév nem csökkenti őket. Ugyanazt a fejlesztést egymás után többször is megrendelheted: a kijelölés rajta marad.`)
+        + (S.smith.length ? ul(S.smith.map((q) => `${q.name}: ${lv(q)}`)) : ''),
+    };
+  });
+  /* NOTES-42-hirelings: seven of Thorin's company hired at the counter (the row is offered from the start). */
+  const wage = (job) => DWARVES.filter((d) => d.job === job);
+  const who = (job) => wage(job).map((d) => d.name).join(', ').replace(/, ([^,]*)$/, ' és $1');
+  const hiredLine = (job) => {
+    const h = wage(job).filter((d) => S.hired.includes(d.id)).map((d) => d.name);
+    return h.length ? p(`<i>Most dolgozik: ${h.join(', ')}.</i>`) : '';
+  };
+  add(C, 'Törpék munkára', true, () => ({
+    title: 'Törpék Thorin társaságából',
+    meta: `${Math.min(...DWARVES.map((d) => d.wage))}–${Math.max(...DWARVES.map((d) => d.wage))} arany/nap · a pultnál`,
+    body: p(`Thorin társai közül heten — ${DWARVES.map((d) => d.name).join(', ').replace(/, ([^,]*)$/, ' és $1')} — felfogadhatók a pultnál (a „Törpék Thorin társaságából” sor nyitja a listát).`)
+      + p(`A napi bért felfogadáskor, aztán minden reggel előre fizeted a közös erszényből; a hét étkezés idején esznek (fejenként ${HIRE.meal} arany, ha Zsáklak kamrája tele van, ingyen). Ha nincs elég arany, nem dolgoznak (adósság nincs), és szólnak; amint az erszény fizetni tud, folytatják.`)
+      + p(`A háttérben dolgoznak, étkezésenként egy műszakot, éjjel pihennek, és reggelente jelentést kapsz: mit végeztek, mibe került (az utolsó jelentés a listában is megmarad). Csak a felső ${MAX_LAYER + 1} rétegben dolgoznak (0–${LIMIT_DEPTH} m), és csak ott, ahová már leértetek.`)
+      + p(`Ketten játszva a bérek ×${num(COOP.price)}. Ugyanebben a listában el is bocsáthatod őket.`)
+      + (S.hired.length ? p(`<i>Most dolgozik: ${S.hired.map((id) => DWARVES.find((d) => d.id === id)?.name).filter(Boolean).join(', ')}.</i>`) : ''),
+  }));
+  add(C, 'Törpék munkára', true, () => ({
+    title: `${who('lamp')}: lámpások`,
+    meta: `${wage('lamp')[0].wage} arany/nap fejenként`,
+    body: p(`Lámpásokat akasztanak a kiásott járataitok falára, a felszínhez legközelebbiektől lefelé: műszakonként fejenként ${LANTERN.perShift}-t, legalább ${num(LANTERN.spacing, 1)} m-re egymástól, összesen legfeljebb ${LANTERN.max}-et. A lámpás fénye bevilágítja a járatot.`)
+      + p('Ha kiásod mögüle a falat, leveszik; a következő műszakban újat akasztanak. A létrák, a hordólift és a játékosok mellé nem tesznek.') + hiredLine('lamp'),
+  }));
+  add(C, 'Törpék munkára', true, () => ({
+    title: `${who('map')}: térkép`,
+    meta: `${wage('map')[0].wage} arany/nap`,
+    body: p(`Thrór térképére rajzolja egy réteg feltárt részét: amerre a járataitok és a feltört üregek vezetnek. Rétegenként ${ORI.days.join(' / ')} nap alatt végez (I. / II. / III. réteg), a legsekélyebb még kész nélküli rétegen kezdi.`)
+      + p('A térképen vörös tintával, mélységszeletenként látszik a munkája (a félkész rész százalékkal). Olcsóbb és lassabb, mint Balin térképe, és csak azt mutatja, ahol már jártatok.') + hiredLine('map'),
+  }));
+  add(C, 'Törpék munkára', true, () => ({
+    title: `${who('glean')}: apró leletek`,
+    meta: `${wage('glean')[0].wage} arany/nap fejenként`,
+    body: p(`Összeszedik a feltárt rétegekben a falban maradt apró leleteket (legfeljebb ${GLEAN.small} arany értékűeket; híres és különleges leletet soha), és eladják: az ár ${pct(GLEAN.share)}-a kerül az erszénybe. Mindig ott keresnek, ahol a legtöbb maradt.`)
+      + p('Amit felszednek, az a ti számotokra is eltűnik a falból: ahogy a réteg kiürül, egyre kevesebbet hoznak, és egy idő után a bérüket sem keresik meg. A játékos közelében lévő leletet meghagyják neki.') + hiredLine('glean'),
+  }));
+  add(C, 'Törpék munkára', true, () => ({
+    title: `${who('stair')}: csigalépcső`,
+    meta: `${wage('stair')[0].wage} arany/nap`,
+    body: p(`Csigalépcsőt vág a gödör mellé a gyeptől lefelé, deszkafokokkal: műszakonként ${num(Math.floor(STAIR.perShift / STAIR.step) * STAIR.step, 2)} m lépcsőt, a feltárt mélységig (legfeljebb ${LIMIT_DEPTH} m-ig). A bejáratát fakeret jelzi a gyepen.`)
+      + p(`A lépcsőn ×${num(STAIR.walk)} sebességgel jártok, gyorsabban, mint létrán, mászás, éhezés és esés nélkül. A létráitokhoz, a hordólifthez és a lezárt helyekhez nem nyúl; ha valaki a lépcső helyén áll, megvárja, ha egy létra áll az útjában, ott megáll.`) + hiredLine('stair'),
   }));
   add(C, 'A hordólift', true, () => ({
     title: 'Hordólift',
@@ -375,6 +494,7 @@ function shireEntries(add, S) {
     title: 'Harapnivaló a zsákból',
     meta: 'mélyen is időben enni',
     body: p(`Ha egy étkezés feléig nem ettél, a hobbit magától megeszik egy harapnivalót a zsákjából, és ez időben evésnek számít. Kézzel is ehetsz a zsákból (szünet → Zsák → „Megeszem”), a nyers krumplit is (+${BAG_FOOD.krumpli}).`)
+      + p('Az Akciókerék Evés pontja (2 / 9 / LB nyomva tartva) a zsákod legjobban illő ételét eszi meg: a legtöbbet adót, ami még elfér a tányérodon.')
       + ul(Object.entries(SNACKS).map(([id, n]) => {
         const f = FIND_TYPES.find((x) => x.id === id);
         return S.found.has(id) && f ? `${f.name}: +${n} a tányérra` : LOCKED;
@@ -391,7 +511,7 @@ function shireEntries(add, S) {
     meta: `most: ${REP.names[S.repLevel]} (${S.rep} pont)`,
     body: p(`Minden szint ${pct(REP.price)}-kal olcsóbbá teszi a Zöld Sárkány árait, és ${pct(REP.sell)}-kal többet fizet a leletekért.`)
       + ul(REP.levels.map((n, k) => (k <= S.repLevel + 1 ? `${REP.names[k]}: ${n} ponttól${k ? ` · −${pct(REP.price * k)} ár, +${pct(REP.sell * k)} eladás` : ''}` : LOCKED)))
-      + p(`Hírnevet hoz: minden csere (+${TRADE.rep}), Bilbó születésnapja (+${REP.birthday}) és minden ott elajándékozott mathom (+${REP.gift}).`),
+      + p(`Hírnevet hoz: minden csere (+${TRADE.rep}), Bilbó születésnapja (+${REP.birthday}) és minden ott elajándékozott mathom (+${REP.gift})${S.partyMet ? ', valamint Bilbó ünnepségének előkészületei a Mulatóréten' : ''}.`),
   }));
   add(C, 'A szomszédság', S.repLevel >= 1 || S.buyer, () => ({
     title: 'Új vevők',
@@ -409,6 +529,17 @@ function shireEntries(add, S) {
     meta: 'szeptember 22.',
     body: p('Ha elég kényelmes Zsáklak, a születésnapon ünnep van: a hobbit-szokás szerint az ünnepelt ad ajándékot. A zsákodban lévő mathomokat elajándékozhatod.')
       + p(`Az ünnep +${REP.birthday} hírnév, minden elajándékozott mathom további +${REP.gift}.`),
+  }));
+  // NOTES-39-party: Bilbo's eleventy-first party. Unlocked by its hint (the purse once held the first stage's price) or a
+  // stage bought; the stages after the next one stay "???", the scene is told only once it was held.
+  const P = S.party;
+  add(C, 'Ünnepek', S.partyMet, () => ({
+    title: 'Bilbó ünnepsége',
+    meta: `a Mulatórét · ${P.done ? 'megtartották' : `${P.stages} / ${STAGES.length} rész kész`}`,
+    body: p(`A gödörtől délnyugatra, a dűlőút végén áll a Mulatófa. Az út mellett, a kapu helyénél álló táblánál (használat gomb) rendezheted be a Mulatórétet Bilbó száztizenegyedik születésnapjára. ${STAGES.length} rész van, mindegyik drágább az előzőnél, és csak sorban készíthetők el; a közös erszényből fizettek, bármelyikőtök rendelhet (ketten játszva az árak ×${num(COOP.price)}, a hírnév nem csökkenti őket). Minden rész rögtön meg is látszik a réten.`)
+      + ul(STAGES.map((s, k) => (k <= P.stages ? `<b>${s.name}</b> · ${gold(s.price)}${k < P.stages ? ' · kész' : ' <i>(következő)</i>'}<br><small>${s.gain[0].toUpperCase()}${s.gain.slice(1)}.</small>` : LOCKED)))
+      + (P.stages >= STAGES.length ? p(`Az ünnepség alkonyatkor kezdődik (19 és 23 óra között), ha valamelyikőtök a Mulatóréten van. 19 órakor szól a játék, ha máshol jártok. Ha nem akartok alkonyatig várni, a táblánál a „Várakozás alkonyatig” ugrik az időben (ha mindannyian ott vagytok). Az ünnepség jelenetét a megerősítés gomb lapozza, a vissza gomb átugorja (a jutalom akkor is jár).`) : '')
+      + (P.done ? p('Az ünnepségen Gandalf tűzijátéka és sárkánya, vacsora, Bilbó beszéde — és Bilbó egy villanással eltűnt. Az üres szék ott maradt a Mulatófa alatt. Emlékül Gandalf régi tűzijátéka a mathom-szoba vitrinjébe került (Gyűjtemény). Az ünnepség nem ismétlődik.') : ''),
   }));
 }
 
@@ -436,10 +567,67 @@ function bagEndEntries(add, S) {
   }
 }
 
-/* ---------------- 6. controls (always) ---------------- */
+/* ---------------- 6. heroes and abilities (NOTES-45-final-docs) ---------------- */
+
+/** A skill's text without what this save has not met yet (Sting, the spiders). */
+function skillText(t, S) {
+  let s = t;
+  if (!S.sting) s = s.replace(' (vagy a Fullánk)', '');
+  if (!S.spider) s = s.replace(' és a pókokat', '').replace(' és a pókok', '');
+  return s;
+}
+
+function heroEntries(add, S) {
+  const C = 5;
+  // NOTES-41-xp: experience and skill points (the HUD plaque is there from the start).
+  const foes = [S.goblin ? 'a goblinok' : '', S.spider ? 'a pókok' : ''].filter(Boolean).join(' és ');
+  add(C, 'Tapasztalat', true, () => ({
+    title: 'Tapasztalat és képességek',
+    meta: 'Szünet › Képességek',
+    body: p(`Tapasztalatot gyűjtesz az ásással (keményebb kőben és mélyebb rétegben többet), minden lelettel, ami a zsákodba kerül (az értékesebb többet ér, egy híres lelet ${XP_GAIN.find.famous} tapasztalatot)${foes ? `, ${foes} elkergetésével` : ''}${S.troll ? `, a trollok kővé dermesztésével (${XP_GAIN.troll} trollonként)` : ''} és minden új réteg első elérésével.`)
+      + p(`Minden szintlépés egy <b>képességpontot</b> ad. A Szünet menü <b>Képességek</b> lapján költheted el a hősöd saját képességeire (hősönként négy, mindegyik legfeljebb ${MAX_RANK}. fokig). Az első szintek gyorsan jönnek (a 2. szinthez ${levelStart(2)}, az 5. szinthez ${levelStart(5).toLocaleString('hu-HU')} tapasztalat kell), a későbbiek egyre lassabban. A pontok nem kerülnek aranyba, és visszavenni csak azt lehet, amit ugyanabban a látogatásban adtál.`)
+      + p('A Képességek lapon fel / le választasz, a megerősítés (vagy jobbra) ad egy pontot, balra visszaveszed; egérrel kattints a sorra, majd még egyszer. Ketten játszva mindenkinek saját tapasztalata és saját lapja van, és mindenki a saját gombjaival lapozza.')
+      + p('A neved alatti kis táblán a szinted és a tapasztalatcsík látszik; a piros pecsét (pl. +2) jelzi, ha elkölthető képességpontod van. Szintlépéskor egy szalag is szól róla.')
+      + (S.heroes.length ? ul(S.heroes.map((h) => `${h.name}: ${h.level}. szint · ${h.xp.toLocaleString('hu-HU')} tapasztalat${h.free ? ` · ${h.free} elkölthető pont` : ''}`)) : ''),
+  }));
+  for (const ch of CHARACTERS) {
+    const skills = SKILLS[ch.id];
+    if (!skills) continue;
+    add(C, 'Tapasztalat', true, () => ({
+      title: `${ch.name} képességei`,
+      meta: [ch.plus, ch.minus].filter(Boolean).join(' · '),
+      body: ul(skills.map((s) => `<b>${s.name}</b>: ${skillText(s.desc, S)}<br><small>${MAX_RANK}. fokon: ${s.line(MAX_RANK)}</small>`)),
+    }));
+  }
+  // NOTES-38-finders: knocking on the wall (met once a player has been 3 m down, as the wheel's slice).
+  const hear = [S.goblin ? 'a goblinok' : '', S.spider ? 'a pókok' : ''].filter(Boolean).join(' és ');
+  add(C, 'A gödörben', S.pit, () => ({
+    title: 'Kopogtatás a falon',
+    meta: '1 · Ö · LB + jobb kar benyomása · Akciókerék',
+    body: p(`Lent a gödörben fordulj a falnak (legfeljebb ${num(FINDERS.tap.reach, 1)} m-re), és kopogtass: <b>1</b> (a 2. játékosnak <b>Ö</b>; kontrolleren tartsd az LB-t, és nyomd be a jobb kart), vagy válaszd az Akciókerékből. A visszhang megmondja, merre és nagyjából milyen messze van a rétegen a legközelebbi üreg, pince vagy terem (a saját alagutaitokat és azt az üreget, amiben állsz, nem számítja): „Üregesen kong… balra, kb. 12 m”, és a célkereszt körül egy gyűrű nyila is arra mutat.`)
+      + p(`Ingyenes, de zajos${hear ? `: ${hear} meghallják, a kincstárban Szmaug is` : ''}. Utána ${FINDERS.tap.cooldown} másodpercig zúg a fal, addig nem kopogtathatsz újra. Ha a rétegen nincs üreg: „Tömören szól a fal”.`),
+  }));
+  // NOTES-44-pickup-edge: the world's edge (on Thrór's map from the start, the fence round the meadow).
+  const side = Math.round(EDGE.x1 - EDGE.x0 + 1);
+  add(C, 'A gödörben', true, () => ({
+    title: 'A világ széle',
+    meta: `${side} × ${side} m-es gödör · a rét kerítése`,
+    body: p(`A gödör ${side} × ${side} méteres. A széléhez érve a föld sötét, rúnákkal rótt kőfallá változik: azon túl nem lehet ásni, és a játék szól is: „${EDGE_LINES.dig}” A legmélyén, Szmaug kincstára alatt is ugyanez a helyzet.`)
+      + p(`Fent a Megyében a rét szélén körbefutó kerítésig mehetsz (a gödörtől kb. ${EDGE.surface} m-re): „${EDGE_LINES.walk}” Thrór térképén a világ szélét satírozott kősáv jelzi.`),
+  }));
+  // NOTES-36-partner: the co-op partner marker (met once two have played).
+  add(C, 'Ketten játszva', S.partner, () => ({
+    title: 'A társad jele',
+    meta: 'a társ színe, távolsága, mélysége',
+    body: p('Ketten játszva a képernyőfeleden egy kis tű mutatja a társad helyét a feje fölött, a falon és a földön át is, fölötte egy fatáblán a neve a színében, a távolsága („14 m”) és a szintkülönbség („↓ 12 m”: lejjebb van, „↑”: feljebb). Ha nincs a látómeződben, a tábla a képernyő szélén vár, és egy nyíl mutatja, merre fordulj; ha messze alattad van, lefelé mutat.')
+      + p('Közelről (2,5–5,5 m) a jel elhalványul. Ha a társad Zsáklakban van, a jel a kerek ajtón áll („Zsáklakban”). Menükben, jelenetekben, ájultan és a Versengés módban nincs jel. Thrór térképén mindkettőtök pontja és a köztetek lévő távolság is látszik.'),
+  }));
+}
+
+/* ---------------- 7. controls (always) ---------------- */
 
 function controlEntries(add) {
-  const C = 5;
+  const C = 6;
   const skip = keyName(SKIP_KEY);
   const table = (rows) => `<table>${rows.map(([a, b]) => `<tr><th>${a}</th><td>${b}</td></tr>`).join('')}</table>`;
   add(C, '', true, () => ({
@@ -449,7 +637,9 @@ function controlEntries(add) {
       ['W A S D', 'járás'], ['egér', 'nézelődés'], ['bal egérgomb / F', 'ásás'], ['jobb egérgomb / Q', 'létra lerakása'],
       ['Szóköz', 'ugrás, mászás'], ['Shift / C', 'lefelé mászás, lopakodás'], ['E', 'használat (pult, ajtók, bútorok)'],
       ['G / középső egérgomb', 'kődobás'], ['X', 'a karakter képessége (Bilbónak a Gyűrű)'], ['T', 'csúfolódás (Bilbó)'],
-      ['R', 'rakéta vagy a Sasok'], ['V', 'kötélbiztosítás'], ['H', 'lámpa magasra'],
+      ['R', 'a Sasok hívása'], ['C + R', 'töltet lerakása, meggyújtása'], ['V', 'kötélbiztosítás'], ['H', 'lámpa magasra'],
+      ['1', 'kopogtatás a falon'], [`${digit(WHEEL_KEYS.mouse)} (nyomva tartva)`, 'Akciókerék: válassz az egérrel, engedd el'],
+      ['B', 'Thrór térképe'], ['J / Tab', 'a szerződés tekercse'],
     ]),
   }));
   add(C, '', true, () => ({
@@ -457,7 +647,8 @@ function controlEntries(add) {
     meta: 'F2: a billentyűzet jobb fele',
     body: p('Az F2 billentyűvel csatlakozik egy második játékos a billentyűzet jobb oldalán (ha nincs kontroller).') + table([
       ['nyilak', 'járás'], ['I J K L', 'nézelődés'], ['U', 'ásás'], ['O', 'létra'], ['jobb Shift / Num 0', 'ugrás'], ['jobb Ctrl / .', 'lefelé mászás'],
-      ['P', 'használat'], ['Ő', 'kődobás'], ['Á', 'képesség'], ['Ű', 'csúfolódás'], ['É', 'rakéta, Sasok'], [',', 'kötél'], ['-', 'lámpa'],
+      ['P', 'használat'], ['Ő', 'kődobás'], ['Á', 'képesség'], ['Ű', 'csúfolódás'], ['É', 'Sasok'], ['. + É', 'töltet'], [',', 'kötél'], ['-', 'lámpa'],
+      ['Ö', 'kopogtatás a falon'], [`${digit(WHEEL_KEYS.keys2)} (nyomva tartva)`, 'Akciókerék: válassz a nyilakkal, engedd el'],
       ['N', 'szerződés'], ['Ú', 'térkép'], ['Enter / Backspace', 'menükben: választás / vissza'],
     ]),
   }));
@@ -466,15 +657,33 @@ function controlEntries(add) {
     meta: 'Xbox-elrendezés',
     body: p('Egy új kontroller Start gombja csatlakoztatja a második játékost.') + table([
       ['bal kar', 'járás'], ['jobb kar', 'nézelődés'], ['RT / RB', 'ásás'], ['LT / Y', 'létra'], ['A', 'ugrás, választás'], ['LB (tartva)', 'lefelé mászás, lopakodás'],
-      ['X', 'használat'], ['B', 'kődobás · menükben vissza'], ['D-pad bal', 'képesség'], ['D-pad jobb', 'csúfolódás'], ['D-pad fel', 'rakéta, Sasok'], ['D-pad le', 'kötél'],
-      ['jobb kar benyomva', 'lámpa'], ['bal kar benyomva', 'térkép'], ['View', 'szerződés (2 mp tartva: a 2. játékos kiszáll)'], ['Start (Menu)', 'szünet'],
+      ['LB (nyomva tartva, más gomb nélkül)', 'Akciókerék: válassz a bal karral, engedd el'],
+      ['X', 'használat'], ['B', 'kődobás · menükben vissza'], ['D-pad bal', 'képesség'], ['D-pad jobb', 'csúfolódás'], ['D-pad fel', 'Sasok'], ['LB + D-pad fel', 'töltet'], ['D-pad le', 'kötél'],
+      ['jobb kar benyomva', 'lámpa (LB nélkül)'], ['LB + jobb kar benyomva', 'kopogtatás a falon'], ['bal kar benyomva', 'térkép'],
+      ['View', 'szerződés (2 mp tartva: a 2. játékos kiszáll)'], ['LB + View', 'következő zeneszám'], ['Start (Menu)', 'szünet'],
     ]),
+  }));
+  add(C, '', true, () => ({
+    title: 'Akciókerék',
+    meta: `${digit(WHEEL_KEYS.mouse)} · ${digit(WHEEL_KEYS.keys2)} · LB nyomva tartva`,
+    body: p(`A különleges akciókat egy kerékből is elérheted. Tartsd nyomva a <b>${digit(WHEEL_KEYS.mouse)}</b>-es gombot (a billentyűzet jobb felén játszó társ a <b>${digit(WHEEL_KEYS.keys2)}</b>-est, kontrolleren az <b>LB</b>-t, más gomb nélkül), és ${num(WHEEL.hold, 1)} másodperc múlva kinyílik a pergamenkerék a saját képernyőfeleden. Az egérrel (a nyilakkal, a bal karral) válaszd ki az akciót, és engedd el a gombot: megtörténik. Ha semmit sem választasz (az egér vagy a kar középen), elengedve nem történik semmi.`)
+      + p(`A játék közben nem áll meg: a társad tovább játszik, te lassabban lépsz (×${num(WHEEL.slow)}), és az egér nem forgatja a nézetet, amíg a kerék nyitva van; kontrollerrel és a nyilakkal választva meg is állsz.`)
+      + p('A kerékben csak az látszik, amit már megszereztél vagy megismertél, és minden akció mindig ugyanott van: fent a létra, jobbra fent a Sasok, jobbra a töltet, jobbra lent a kopogtatás, lent az evés a zsákból, balra lent a lámpa, balra a kődobás, balra fent a kötél. Mindegyiknél ott a darabszám vagy az ár, a visszatöltődés köre, és kicsiben a saját gyorsgombja. A szürke akció most nem használható, alatta röviden az ok („Csak a föld alatt”, „Nincs nálad”…).')
+      + p('Kontrolleren az LB rövid megnyomása, a lopakodás (LB + bal kar) és az LB-s gombpárok (LB + D-pad fel: töltet, LB + jobb kar benyomása: kopogtatás, LB + View: következő zeneszám) ugyanúgy működnek, mint eddig. Ha új akciót szerzel, a játék egyszer szól: „Új akció: … — tartsd nyomva …”.'),
+  }));
+  add(C, '', true, () => ({
+    title: 'Thrór térképe',
+    meta: 'B · Ú · bal kar benyomva',
+    body: p('A térkép a gödör keresztmetszetét mutatja rétegenként, a ti helyetekkel és mélységetekkel (ketten játszva a köztetek lévő távolsággal is). Megnyitja: <b>B</b> (a 2. játékosnak <b>Ú</b>; kontrolleren a bal kar benyomása), vagy a szünet menü Térkép sora.')
+      + p('A megvett rétegeken Balin alaprajzai is látszanak (a réteg összes ürege és terme); ha Ori dolgozik nálatok, vörös tintával az ő térképe is: amerre már jártatok. A gödör két oldalán és alján satírozott kősáv jelzi a világ szélét.'),
   }));
   add(C, '', true, () => ({
     title: 'Képernyők és menük',
     meta: 'szünet, térkép, szerződés',
     body: table([
-      ['Esc / Start', 'szünet (a kézikönyv, a zsák, a gyűjtemény és a beállítások innen; a zsákban ételt is ehetsz)'], ['B', 'Thrór térképe'], ['J vagy Tab', 'a szerződés tekercse'],
+      ['Esc / Start', 'szünet (a térkép, a szerződés, a zsák, a képességek, a gyűjtemény, a kézikönyv és a beállítások innen)'], ['B', 'Thrór térképe'], ['J vagy Tab', 'a szerződés tekercse'],
+      ['Szünet › Zsák', 'a zsák tartalma; ételt is ehetsz belőle; alul a Felvétel: mit veszel fel ásáskor (1–4 · 7 8 9 Ö · Y + X)'],
+      ['Szünet › Képességek', 'tapasztalat és képességpontok'],
       ['F2', 'második billentyűzetes játékos'], ['F3', 'osztott képernyő: egymás mellett / egymás alatt'], ['M', 'zene halkítása'],
     ]) + p('A menükben a nyilakkal (WASD-vel, D-paddal) lépsz, Enterrel, Szóközzel vagy A-val választasz, Esc-kel vagy B-vel lépsz vissza.'),
   }));

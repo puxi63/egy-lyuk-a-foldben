@@ -334,13 +334,19 @@ export class Journal {
   }
 
   state() {
-    if (!this.marks.size && !this.seen.size) return undefined;
+    // NOTES-38-finders: Balin's layer maps and the lamp shimmer tier ride in this object as the optional `finders` field
+    // (finders.js state(); absent when nothing was bought, and a save without it starts with none).
+    const finders = this.game.finders ? this.game.finders.state() : this.findersSave;
+    if (!this.marks.size && !this.seen.size && !finders) return undefined;
     const out = { marks: [...this.marks] };
     if (this.seen.size) out.seen = [...this.seen]; // NOTES-31-handbook (optional field)
+    if (finders) out.finders = finders;
     return out;
   }
 
   restore(s) {
+    // NOTES-38-finders: kept for finders.js (created later, with the first player: findersOf reads it).
+    if (s?.finders && typeof s.finders === 'object') this.findersSave = s.finders;
     for (const m of s?.marks || []) this.marks.add(m);
     for (const id of s?.seen || []) if (typeof id === 'string') this.seen.add(id);
   }

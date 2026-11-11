@@ -15,10 +15,14 @@
  *
  * Shown by ui/screens.js (shared, the game frozen) from the pause's "Térkép", the map key (input.js `mapPressed`:
  * B, the F2 player's Ú, a pad's left-stick click) or Bag End's Thrór's map in the study (bagend/effects.js).
- * Built only when opened (one innerHTML); display:none while hidden, so no cost then. ==== */
+ * Built only when opened (one innerHTML); display:none while hidden, so no cost then.
+ * NOTES-42-hirelings: Ori's maps (the explored part of layers I–III, hirelings/survey.js) share Balin's plan helpers. ==== */
+import { ORIGIN } from '../config.js';
+import { findersOf } from '../finders.js';
 import { FIND_TYPES } from '../finds.js';
 import { LIFT_STOPS } from '../lift.js';
 import { LAYER_BOTTOM, LAYER_NAMES, LAYER_TOPS } from '../materials.js';
+import { BAG_END } from '../surface/bagend.js';
 import { hex, moonPhasePath } from './art.js';
 import { deviceOf } from './glyphs.js';
 import { toRunes } from './runes.js';
@@ -120,7 +124,203 @@ const HILL = `<g class="m-hill">
   <path class="ln" d="M980 ${SURF}v-30m0 10c-14-2-22-12-18-22 4-12 22-14 30-4 10-6 24 2 20 14 6 8-4 18-14 14"/>
 </g>`;
 
+/** The short name of a character ("Zsákos Bilbó" → "Bilbó"). */
+const shortName = (name) => (name || '').split(' ').pop();
+
+/**
+ * NOTES-36-partner: the players on the shaft. Each one a dot in his colour at his depth with a little parchment flag
+ * (the short name and the depth): player 1's flag left of the shaft, player 2's right of it; two dots at nearly the
+ * same depth step aside a little. With two players a dashed line joins the dots.
+ */
+function whoSvg(players) {
+  const list = players.map((p, slot) => ({ p, slot })).filter(({ p }) => !p.choosing);
+  const ys = list.map(({ p }) => depthY(Math.max(0, p.depth || 0)));
+  const close = list.length === 2 && Math.abs(ys[0] - ys[1]) < 10;
+  const join = list.length === 2 ? `<path class="m-wholine" d="M${SHAFT} ${ys[0].toFixed(1)}V${ys[1].toFixed(1)}" stroke="#2a1406" stroke-width="1.6" stroke-dasharray="3 4" fill="none"/>` : '';
+  return join + list.map(({ p, slot }, k) => {
+    const y = ys[k];
+    const col = hex(p.ch?.color, '#7a3a10');
+    const cx = SHAFT + (close ? (slot ? 6 : -6) : 0);
+    const name = shortName(p.ch?.name);
+    const label = `${name} · ${Math.round(p.depth || 0)} m`;
+    const wd = Math.round(label.length * 7.6 + 18);
+    const left = list.length > 1 ? slot === 0 : false;
+    const fx = left ? cx - 14 - wd : cx + 14;
+    return `<g class="m-pl" data-slot="${slot}">
+      <path d="M${cx} ${y.toFixed(1)}L${left ? fx + wd : fx} ${y.toFixed(1)}" stroke="${col}" stroke-width="2.4"/>
+      <rect x="${fx}" y="${(y - 11).toFixed(1)}" width="${wd}" height="22" rx="4" fill="#efdfb6" stroke="${col}" stroke-width="2.4"/>
+      <text class="m-pltx" x="${fx + wd / 2}" y="${(y + 5).toFixed(1)}" text-anchor="middle" style="font-size:15px">${label}</text>
+      <circle class="m-who" cx="${cx}" cy="${y.toFixed(1)}" r="7" style="fill:${col}"><title>${p.ch?.name || ''}</title></circle>
+    </g>`;
+  }).join('');
+}
+
+/** NOTES-36-partner: the line under the map with both players' depths and their distance (empty in single play). */
+function whoLine(game) {
+  const list = game.players.filter((p) => !p.choosing);
+  if (list.length < 2) return '';
+  const [a, b] = list;
+  // A player inside Bag End (its interior lies far off in the world, bagend/) counts as at the round door.
+  const at = (p) => (game.bagEnd?.isInside?.(p) ? { x: BAG_END.x, y: 0, z: BAG_END.z } : p.pos);
+  const pa = at(a);
+  const pb = at(b);
+  const d = Math.round(Math.hypot(pa.x - pb.x, pa.y - pb.y, pa.z - pb.z));
+  const dz = Math.round(Math.abs((a.depth || 0) - (b.depth || 0)));
+  const dot = (p) => `<i style="display:inline-block;width:0.7em;height:0.7em;border-radius:50%;margin-right:0.3em;vertical-align:-0.05em;border:1px solid #2a1406;background:${hex(p.ch?.color, '#7a3a10')}"></i>`;
+  const one = (p) => `${dot(p)}<b>${shortName(p.ch?.name)}</b> ${Math.round(p.depth || 0)} m mélyen`;
+  return `${one(a)} · ${one(b)} · egymástól ${d} m${dz >= 1 ? ` (${dz} m szintkülönbség)` : ''}`;
+}
+
+/* ---------------- Balin's layer maps (NOTES-38-finders) ---------------- */
+/** Where a bought layer's plans go: right of the shaft's stop labels, small squares in the band. */
+const PX0 = 452;
+const PLAN = 56; // a plan's side (the block's 24 × 24 m)
+const PGAP = 14;
+const PCELL = 0.5; // m per plan cell (the survey's grid)
+
+/**
+ * A bought layer's hollows (finders.js hollows: the generated caves, rooms and set pieces, not the dug tunnels) drawn as
+ * Balin would: a row of small plans (seen from above, north up) of the layer cut into depth slices, each with its depth
+ * range, the hollows in ink as merged runs of 0.5 m cells. Plus a note with the count.
+ */
+function hollowsSvg(finders, l, y, a, b) {
+  const list = finders.hollows(l);
+  const n = sliceCount(a, b);
+  const grids = planGrids(n, (put) => {
+    for (const h of list) {
+      const p = h.pts;
+      for (let i = 0; i < p.length; i += 3) put(p[i], p[i + 1], p[i + 2], a, b);
+    }
+  });
+  const cols = planCols();
+  const cw = PLAN / cols;
+  const top = y + 9;
+  let svg = '';
+  grids.forEach((grid, k) => {
+    const x0 = PX0 + k * (PLAN + PGAP);
+    const d = planPath(grid, cols, x0, top, cols);
+    const d0 = Math.round(a + ((b - a) * k) / n);
+    const d1 = Math.round(a + ((b - a) * (k + 1)) / n);
+    svg += `<g class="m-plan"><rect x="${x0}" y="${top}" width="${PLAN}" height="${PLAN}" fill="#e9d6a6" fill-opacity="0.55" stroke="#5a3a1a" stroke-width="0.9" stroke-dasharray="2 1.6"/>
+      <path d="${d}" fill="none" stroke="#3a1e08" stroke-opacity="0.75" stroke-width="${(cw + 0.5).toFixed(2)}" stroke-linecap="round"/>
+      <text x="${x0 + PLAN / 2}" y="${top - 1.6}" text-anchor="middle" style="font-size:8.5px;fill:#5a2a0a">${d0}–${d1} m</text></g>`;
+  });
+  const nx = PX0 + n * (PLAN + PGAP) - 4;
+  const note = `<text class="m-bal" x="${nx}" y="${top + PLAN / 2 - 2}" style="font-size:12px;font-style:italic;fill:#5a2a0a">Balin térképe</text>
+    <text x="${nx}" y="${top + PLAN / 2 + 12}" style="font-size:11px;font-style:italic;fill:#5a2a0a">${list.length} üreg és terem · É ↑</text>`;
+  return `<g class="m-hollows" data-l="${l}">${svg}${note}</g>`;
+}
+
+/* NOTES-42-hirelings: the plan helpers Balin's maps and Ori's share. */
+/** How many depth slices a layer's plans have. */
+function sliceCount(a, b) {
+  return Math.max(3, Math.min(7, Math.round((b - a) / 12)));
+}
+
+/** Cells per plan side (the block's 24 m at PCELL). */
+function planCols() {
+  return Math.round((-2 * ORIGIN.x) / PCELL);
+}
+
+/** n slice grids filled by `fill(put)`, where put(x, y, z, a, b) marks the world point's cell in its slice. */
+function planGrids(n, fill) {
+  const cols = planCols();
+  const grids = Array.from({ length: n }, () => new Uint8Array(cols * cols));
+  fill((x, y, z, a, b) => {
+    const k = Math.floor(((-y - a) / (b - a)) * n);
+    const cx = Math.floor((x - ORIGIN.x) / PCELL);
+    const cz = Math.floor((z - ORIGIN.z) / PCELL);
+    if (k >= 0 && k < n && cx >= 0 && cx < cols && cz >= 0 && cz < cols) grids[k][cz * cols + cx] = 1;
+  });
+  return grids;
+}
+
+/** A grid's ink as merged horizontal runs (rows 0 … rows − 1 only: a plan still being drawn). */
+function planPath(grid, cols, x0, top, rows) {
+  const cw = PLAN / cols;
+  let d = '';
+  for (let r = 0; r < rows; r++) {
+    const ry = (top + (r + 0.5) * cw).toFixed(1);
+    for (let c = 0; c < cols; c++) {
+      if (!grid[r * cols + c]) continue;
+      let e = c;
+      while (e + 1 < cols && grid[r * cols + e + 1]) e++;
+      d += `M${(x0 + c * cw + 0.25).toFixed(1)} ${ry}H${(x0 + (e + 1) * cw - 0.25).toFixed(1)}`;
+      c = e;
+    }
+  }
+  return d;
+}
+
+/**
+ * NOTES-42-hirelings: Ori's map of a layer — the explored part (hirelings/survey.js: the air the players' tunnels reach)
+ * in the same depth-slice plans as Balin's, in a reddish ink, drawn slice by slice as his work goes on (`H.ori[l]`, the
+ * slice being drawn row by row from the north). Over Balin's plans when that layer's map was bought too.
+ */
+function oriSvg(H, l, y, a, b, withBalin) {
+  const prog = H.ori[l] || 0;
+  if (prog <= 0) return '';
+  const sv = H.survey;
+  if (!sv.ready) sv.runNow();
+  const cells = sv.cells[l] || [];
+  const n = sliceCount(a, b);
+  const pt = {};
+  const grids = planGrids(n, (put) => {
+    for (let i = 0; i < cells.length; i++) {
+      sv.pos(cells[i], pt);
+      put(pt.x, pt.y, pt.z, a, b);
+    }
+  });
+  const cols = planCols();
+  const cw = PLAN / cols;
+  const top = y + 9;
+  const done = prog * n;
+  let svg = '';
+  grids.forEach((grid, k) => {
+    if (k >= Math.ceil(done - 1e-9)) return;
+    const rows = k < Math.floor(done + 1e-9) ? cols : Math.round((done - k) * cols);
+    const x0 = PX0 + k * (PLAN + PGAP);
+    const d = planPath(grid, cols, x0, top, rows);
+    const frame = withBalin ? '' : `<rect x="${x0}" y="${top}" width="${PLAN}" height="${PLAN}" fill="#ecdcae" fill-opacity="0.5" stroke="#7a3a18" stroke-width="0.8"/>
+      <text x="${x0 + PLAN / 2}" y="${top - 1.6}" text-anchor="middle" style="font-size:8.5px;fill:#5a2a0a">${Math.round(a + ((b - a) * k) / n)}–${Math.round(a + ((b - a) * (k + 1)) / n)} m</text>`;
+    svg += `<g class="m-oplan">${frame}<path d="${d}" fill="none" stroke="#9a2a10" stroke-opacity="0.85" stroke-width="${(cw * 0.8).toFixed(2)}" stroke-linecap="round"/></g>`;
+  });
+  const nx = PX0 + n * (PLAN + PGAP) - 4;
+  const ny = withBalin ? top + PLAN / 2 + 26 : top + PLAN / 2 - 2;
+  const note = `<text class="m-ori" x="${nx}" y="${ny}" style="font-size:12px;font-style:italic;fill:#8a2a10">Ori térképe${prog < 1 ? ` · ${Math.round(prog * 100)} %` : ''}</text>
+    ${withBalin ? '' : `<text x="${nx}" y="${ny + 14}" style="font-size:11px;font-style:italic;fill:#8a2a10">amerre jártatok · É ↑</text>`}`;
+  return `<g class="m-orimap" data-l="${l}">${svg}${note}</g>`;
+}
+
 /** The pointing hand of Thrór's map (a cuff and a finger) aimed at the side door. */
+/**
+ * NOTES-44-pickup-edge: the edge of the world on the cross-section: hatched bedrock along both sides of the bands (from
+ * the garden's line down) and under the last layer, with "a világ széle" in the map's runes and in Hungarian, and a
+ * note in the bottom strip that no one digs past it.
+ */
+function edgeSvg() {
+  const top = SURF + 6;
+  const bot = BAND0 + 9 * BAND;
+  const x0 = 20;
+  const x1 = W - 20;
+  const ew = 12;
+  const hatch = (xa, xb) => {
+    let d = '';
+    for (let y = top; y < bot; y += 9) d += `M${xa} ${y + 9}L${xb} ${y}`;
+    return d;
+  };
+  let bottom = '';
+  for (let x = x0; x < x1; x += 9) bottom += `M${x} ${H - 12}L${x + 9} ${bot}`;
+  const midY = top + (bot - top) * 0.4; // above the moon letters and Durin's door
+  return `<g class="m-edge">
+    <path class="m-ebed" d="M${x0} ${top}h${ew}V${bot}H${x0}zM${x1 - ew} ${top}h${ew}V${bot}h${-ew}zM${x0} ${bot}H${x1}V${H - 12}H${x0}z"/>
+    <path class="m-ehat" d="${hatch(x0, x0 + ew)}${hatch(x1 - ew, x1)}${bottom}"/>
+    <path class="m-eln" d="M${x0 + ew} ${top}V${bot}H${x1 - ew}V${top}"/>
+    <text class="m-ru m-etx" transform="translate(${x1 - ew - 34} ${midY}) rotate(90)" text-anchor="middle">${toRunes('a világ széle')}</text>
+    <text class="m-etx" transform="translate(${x1 - ew - 18} ${midY}) rotate(90)" text-anchor="middle">a világ széle · tovább nem lehet ásni</text>
+  </g>`;
+}
+
 const hand = (x, y) => `<g class="m-hand" transform="translate(${x} ${y})"><path d="M-46-6h18l6-5h20c5 0 5 7 0 7h-10v2h12c4 0 4 6 0 6h-12v2h9c4 0 4 6 0 6h-24c-4 0-6-3-10-4h-9z"/><path class="ln" d="M-46-7v19"/></g>`;
 
 export class MapView {
@@ -182,6 +382,8 @@ export class MapView {
     const deepest = Math.round(g.journal?.deepest?.() ?? Math.max(0, ...g.players.map((p) => p.maxDepth || 0)));
     const trophies = new Set(g.bagEnd?.trophies || []);
     const built = g.lift?.built || new Set();
+    const finders = findersOf(g); // NOTES-38-finders: Balin's layer maps bought
+    const hire = g.hirelings?.ori?.some((v) => v > 0) ? g.hirelings : null; // NOTES-42-hirelings: Ori's maps
     const bands = LAYER_TOPS.map((top, l) => {
       const [a, b] = range(l);
       const y = BAND0 + l * BAND;
@@ -205,16 +407,14 @@ export class MapView {
         <text class="m-nm" x="96" y="${y + 30}">${name}</text>
         <text class="m-ru" x="96" y="${y + 50}">${toRunes(name)}</text>
         <text class="m-dep" x="${SHAFT - 26}" y="${y + 62}" text-anchor="end">${a}–${b} m${reached ? '' : ' · feltáratlan'}</text>
-        ${stops}${marks}${door}${l === 8 ? DRAGON : ''}
+        ${finders.maps.has(l) ? hollowsSvg(finders, l, y, a, b) : ''}${hire ? oriSvg(hire, l, y, a, b, finders.maps.has(l)) : ''}${stops}${marks}${door}${l === 8 ? DRAGON : ''}
       </g>`;
     }).join('');
     const yDeep = depthY(deepest);
     const shaft = `<g class="m-shaft"><path class="m-hole" d="M${SHAFT - 7} ${SURF}V${yDeep.toFixed(1)}h14V${SURF}z"/><path class="ln" d="M${SHAFT - 7} ${SURF}V${yDeep.toFixed(1)}M${SHAFT + 7} ${SURF}V${yDeep.toFixed(1)}M${SHAFT - 9} ${yDeep.toFixed(1)}h18"/>
       <path class="m-dash" d="M${SHAFT} ${(yDeep + 4).toFixed(1)}V${BAND0 + 9 * BAND - 6}"/>${deepest >= 1 ? `<text class="m-deep" x="${SHAFT - 14}" y="${(yDeep + 4).toFixed(1)}" text-anchor="end">${deepest} m</text>` : ""}</g>`;
-    const who = g.players.filter((p) => !p.choosing).map((p) => {
-      const y = depthY(Math.max(0, p.depth || 0));
-      return `<circle class="m-who" cx="${SHAFT}" cy="${y.toFixed(1)}" r="6" style="fill:${hex(p.ch?.color, '#7a3a10')}"><title>${p.ch?.name || ''}</title></circle>`;
-    }).join('');
+    const who = whoSvg(g.players);
+    const pair = whoLine(g);
     // The moon letters (only when readable): silver runes beside Durin's door.
     const moon = visible ? this.moonSvg() : '';
     const dc = g.dayClock;
@@ -238,6 +438,7 @@ export class MapView {
           ${HILL}
           <text class="m-lbl" x="196" y="40" text-anchor="middle">Zsáklak</text>
           ${bands}
+          ${edgeSvg()}
           <path class="m-frame" d="M18 18H${W - 18}V${H - 10}H18z"/>
           ${shaft}${who}${moon}
         </svg>
@@ -245,7 +446,7 @@ export class MapView {
       <div class="mp-bar">
         <div class="mp-moon"><svg viewBox="-11 -11 22 22" aria-hidden="true"><circle r="9.5" class="mm-dark"/><path class="mm-lit" d="${moonPhasePath(idx, 9.5)}"/></svg>
           <span><b>${moonName}</b><small>${when}</small></span></div>
-        <p class="mp-status${visible ? ' lit' : ''}">${status}</p>
+        <div class="mp-mid"><p class="mp-status${visible ? ' lit' : ''}">${status}</p>${pair ? `<p class="mp-pair" style="margin:0.3rem 0 0;text-align:center;font-size:clamp(0.75rem, 1.1vw, 0.95rem);color:#f3e6c4">${pair}</p>` : ''}</div>
         <div class="mp-keys">${mapKey}<span class="or">/</span>${backKey}<span>vissza</span><button class="mp-back" type="button">Vissza</button></div>
       </div>
     </div>`;

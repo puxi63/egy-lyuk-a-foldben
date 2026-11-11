@@ -17,6 +17,13 @@ export const FIRE = {
   fireN: { value: 0 },
 };
 
+/**
+ * NOTES-42-hirelings: an extra fire list (same layout: x, y, z, strength, phase per fire) that every setFires call also
+ * picks from, whatever the layer's own list and `on` are: Óin and Glóin's lanterns in the upper layers
+ * (hirelings/lanterns.js). null when there is none.
+ */
+export const FIRE_EXTRA = { list: null };
+
 /** GLSL: the uniforms and fireLight(world position, world normal) → warm radiance to multiply with the albedo. */
 export const FIRE_GLSL = `
 uniform vec4 firePos[${FIRE_MAX}];
@@ -65,8 +72,10 @@ export function addFireLight(material, strength = 1) {
  * phase per fire; `t` the clock (the flames flicker); `on` false switches the light off (fireN = 0).
  */
 export function setFires(fires, cam, t, on) {
-  const n = fires.length / 5;
-  if (!on || !n) {
+  const extra = FIRE_EXTRA.list; // NOTES-42-hirelings: the lanterns
+  const n = on ? fires.length / 5 : 0;
+  const ne = extra ? extra.length / 5 : 0;
+  if (!n && !ne) {
     FIRE.fireN.value = 0;
     return;
   }
@@ -75,10 +84,13 @@ export function setFires(fires, cam, t, on) {
   const bestD = setFires.bestD || (setFires.bestD = new Float32Array(FIRE_MAX));
   let k = 0;
   const lim = (FIRE_RADIUS + 14) * (FIRE_RADIUS + 14);
-  for (let i = 0; i < n; i++) {
-    const dx = fires[i * 5] - cam.x;
-    const dy = fires[i * 5 + 1] - cam.y;
-    const dz = fires[i * 5 + 2] - cam.z;
+  // NOTES-42-hirelings: index i < n is the layer's list, n + e the extra list's fire e.
+  for (let i = 0; i < n + ne; i++) {
+    const src = i < n ? fires : extra;
+    const o = (i < n ? i : i - n) * 5;
+    const dx = src[o] - cam.x;
+    const dy = src[o + 1] - cam.y;
+    const dz = src[o + 2] - cam.z;
     const d = dx * dx + dy * dy + dz * dz;
     if (d > lim) continue;
     if (k < FIRE_MAX) {
@@ -104,10 +116,12 @@ export function setFires(fires, cam, t, on) {
   const arr = FIRE.firePos.value;
   for (let j = 0; j < k; j++) {
     const i = best[j];
-    const ph = fires[i * 5 + 4];
+    const src = i < n ? fires : extra;
+    const o = (i < n ? i : i - n) * 5;
+    const ph = src[o + 4];
     // Flicker: two incommensurate waves and a fast shiver.
     const fl = 0.86 + 0.08 * Math.sin(t * 7.3 + ph) + 0.05 * Math.sin(t * 13.1 + ph * 2.7) + 0.03 * Math.sin(t * 29 + ph * 5.1);
-    arr[j].set(fires[i * 5], fires[i * 5 + 1], fires[i * 5 + 2], fires[i * 5 + 3] * fl);
+    arr[j].set(src[o], src[o + 1], src[o + 2], src[o + 3] * fl);
   }
   FIRE.fireN.value = k;
 }

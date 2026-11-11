@@ -25,6 +25,9 @@ import { HandbookView } from './handbook.js';
 import { SKIP_KEY } from '../input.js';
 import { MapView } from './map.js';
 import { applySettings, SettingsView } from './settings.js';
+import { SkillsView } from '../xp/view.js'; // NOTES-41-xp
+import { Wheel } from '../wheel/index.js'; // NOTES-43-wheel
+import { PickupPanel } from './pickup.js'; // NOTES-44-pickup-edge
 
 /** The fire, the armchair, the pipe: the pause's room as one inline SVG (built once). */
 const ROOM = `<svg class="room" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
@@ -93,6 +96,8 @@ const ITEMS = [
   { id: 'map', label: 'Térkép', note: 'Thrór térképének módjára' },
   { id: 'journal', label: 'Szerződés', note: 'Bilbó végtelen szerződéstekercse' },
   { id: 'bag', label: 'Zsák', note: 'mi lapul benne' },
+  // NOTES-41-xp: the characters' experience and skills (both players' sheets).
+  { id: 'skills', label: 'Képességek', note: 'tapasztalat és képességpontok' },
   { id: 'collection', label: 'Gyűjtemény', note: 'a mathom-szoba trófeái' },
   // NOTES-31-handbook: Bilbo's handbook, the searchable guide.
   { id: 'handbook', label: 'Kézikönyv', note: 'Bilbó jegyzetei: mi mire való' },
@@ -116,6 +121,8 @@ export class Screens {
     this.opener = 0; // the player who opened the pause
     this.sel = 0;
     this.reload = () => location.reload(); // QA replaces it
+    // NOTES-43-wheel: the action wheel reads each player's intent first thing (watch() below).
+    game.wheel = new Wheel(game);
     let root = document.getElementById('screens');
     if (!root) {
       root = document.createElement('div');
@@ -167,6 +174,10 @@ export class Screens {
     this.bag = new BagView(game, mk());
     this.collection = new CollectionView(game, mk());
     this.handbook = new HandbookView(game, mk()); // NOTES-31-handbook: empty until opened
+    this.skills = new SkillsView(game, mk()); // NOTES-41-xp: empty until opened
+    // NOTES-44-pickup-edge: the pickup filter's toggles, a strip over the bottom of the Zsák screen (each player his own).
+    this.pickup = new PickupPanel(game, mk());
+    this.bag.el.classList.add('has-pk');
     // Losing the pointer lock in free play (the browser's Esc, another window) pauses too.
     this.hadLock = false;
     document.addEventListener('pointerlockchange', () => {
@@ -219,9 +230,13 @@ export class Screens {
     else if (this.view === 'settings') this.settings.input(it);
     else if (this.view === 'credits') this.credits.input(it);
     else if (this.view === 'map') this.map.input(it);
-    else if (this.view === 'bag') this.bag.input(it);
+    else if (this.view === 'bag') {
+      this.pickup.input(); // NOTES-44-pickup-edge: every player's own toggle keys first (raw keys / pad X, Y)
+      this.bag.input(it);
+    }
     else if (this.view === 'collection') this.collection.input(it);
     else if (this.view === 'handbook') this.handbook.input(it);
+    else if (this.view === 'skills') this.skills.input(it); // NOTES-41-xp
     return true;
   }
 
@@ -230,6 +245,9 @@ export class Screens {
    * (the caller skips that player's frame).
    */
   watch(p, i, it) {
+    // NOTES-43-wheel: the action wheel (hold LB / 2 / 9) may freeze the view, slow the walk and, on its release, set the
+    // picked slice's own intent flag; a menu or screen held last frame keeps it shut.
+    this.game.wheel.step(p, i, it, this.menuWas[i] || !!this.view || this.titleUp);
     const b = this.game.bindings[i];
     const padOk = b.pad == null || this.padWas[i] === b.pad;
     this.padWas[i] = b.pad;
@@ -260,7 +278,8 @@ export class Screens {
     const who = g.players.map((p) => {
       const d = Math.max(0, p.depth || 0);
       const where = d < 1 ? 'a felszínen, Zsáklak körül' : `${d.toLocaleString('hu-HU', { maximumFractionDigits: 0 })} m mélyen · ${LAYER_NAMES[layerAtDepth(d)] || ''}`;
-      return `<p><b style="color:${p.ch?.color || '#7a3a10'}">${p.ch?.name || 'Játékos'}</b><br><small>${where}</small></p>`;
+      const lv = p.xp ? ` · ${p.xp.level}. szint` : ''; // NOTES-41-xp
+      return `<p><b style="color:${p.ch?.color || '#7a3a10'}">${p.ch?.name || 'Játékos'}</b>${lv}<br><small>${where}</small></p>`;
     }).join('');
     this.pauseEl.querySelector('.pp-who').innerHTML = who;
     const pad = g.bindings.some((b) => b.pad != null);
@@ -303,7 +322,7 @@ export class Screens {
       const p = g.players[this.opener];
       this.close();
       if (p && !p.choosing) g.journal.open(p, p.depth > 0.5 ? layerAtDepth(p.depth) : 0);
-    } else if (id === 'map' || id === 'bag' || id === 'collection' || id === 'handbook') {
+    } else if (id === 'map' || id === 'bag' || id === 'collection' || id === 'handbook' || id === 'skills') {
       this.openSub(id, this.opener, 'pause'); // NOTES-25-map-contract
     } else if (id === 'title') {
       this.leaving = true;
@@ -360,16 +379,23 @@ export class Screens {
     this.quietUntil = performance.now() + 250;
     const done = () => this.closeSub();
     if (id === 'map') this.map.show({ ...opts, opener: who }, done);
-    else if (id === 'bag') this.bag.show(who, done);
+    else if (id === 'bag') {
+      this.bag.show(who, done);
+      this.pickup.show(); // NOTES-44-pickup-edge
+      this.bag.el.dataset.pk = String(this.pickup.rows().length);
+    }
     else if (id === 'handbook') this.handbook.show(who, done, !!this.game.bindings[who]?.kbm); // NOTES-31-handbook
+    else if (id === 'skills') this.skills.show(who, done); // NOTES-41-xp
     else this.collection.show(done);
   }
 
   closeSub() {
     this.map.hide();
     this.bag.hide();
+    this.pickup.hide(); // NOTES-44-pickup-edge
     this.collection.hide();
     this.handbook.hide();
+    this.skills.hide(); // NOTES-41-xp
     if (this.subBack === 'pause') {
       this.view = 'pause';
       this.skip = 1;
@@ -383,8 +409,10 @@ export class Screens {
     this.settings?.hide();
     this.map?.hide();
     this.bag?.hide();
+    this.pickup?.hide(); // NOTES-44-pickup-edge
     this.collection?.hide();
     this.handbook?.hide();
+    this.skills?.hide(); // NOTES-41-xp
     if (this.view === 'credits') {
       this.view = null;
       this.credits.finish();

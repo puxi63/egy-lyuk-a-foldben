@@ -33,14 +33,20 @@ export class CounterMenu {
   build(items) {
     const t = this.theme;
     const priceText = (p) => (p < 0 ? `+${-p}` : `${p}`);
-    const shelves = [items.slice(0, 3), items.slice(3)].filter((s) => s.length);
+    // NOTES-42-hirelings: a row may show its own price text (`priceLabel`, e.g. the hired dwarves' wages per day).
+    const priceOf = (r) => (r.priceLabel != null ? esc(r.priceLabel) : priceText(r.price));
+    // Three goods on the top shelf, then four per shelf (NOTES-38-finders: one long second shelf overflowed the counter).
+    const per = 4;
+    const shelves = [items.slice(0, 3)];
+    for (let i = 3; i < items.length; i += per) shelves.push(items.slice(i, i + per));
+    const startOf = (si) => (si === 0 ? 0 : 3 + (si - 1) * per);
     this.el.innerHTML = `<div class="shop-room">
       <div class="sign"><div class="sign-chains"></div><div class="sign-board">${DRAGON_SVG}<span>${esc(t.sign)}</span></div></div>
       <div class="shop-body">
         <div class="slate"><div class="slate-title">${esc(t.board)}</div>
-          <ol class="slate-rows">${items.map((r) => `<li class="row"><span class="nm">${esc(r.label)}</span><span class="dots"></span><span class="pr">${priceText(r.price)}<small> ${esc(t.unit)}</small></span></li>`).join('')}</ol>
+          <ol class="slate-rows">${items.map((r) => `<li class="row"><span class="nm">${esc(r.label)}</span><span class="dots"></span><span class="pr">${priceOf(r)}<small> ${r.priceLabel != null ? '' : esc(t.unit)}</small></span></li>`).join('')}</ol>
         </div>
-        <div class="shelves">${shelves.map((s, si) => `<div class="shelf">${s.map((r, i) => `<div class="good" data-i="${si * 3 + i}">${r.art || goodsSVG(r.kind, r.tier)}<span class="tag">${priceText(r.price)}</span></div>`).join('')}</div>`).join('')}</div>
+        <div class="shelves">${shelves.map((s, si) => `<div class="shelf">${s.map((r, i) => `<div class="good" data-i="${startOf(si) + i}">${r.art || goodsSVG(r.kind, r.tier)}<span class="tag">${priceOf(r)}</span></div>`).join('')}</div>`).join('')}</div>
       </div>
       <div class="counter-top"><div class="purse">${coinsSVG(this.coinsId)}<span class="purse-l">${esc(t.purse)}</span><b class="purse-n"></b></div><div class="hint"></div></div>
     </div>`;
@@ -50,6 +56,29 @@ export class CounterMenu {
     this.hintEl = this.el.querySelector('.hint');
     this.coinEls = [...this.el.querySelectorAll('.coin')];
     this.state = { sel: -1, money: -1, hint: '', flags: [] };
+    // NOTES-38-finders: a long list (the counter now has a dozen rows and more) scrolls inside the slate, which follows
+    // the selection (inline styles: the stylesheet stays untouched); many rows are written a little smaller.
+    this.slateEl = this.el.querySelector('.slate');
+    const body = this.el.querySelector('.shop-body');
+    Object.assign(body.style, { flex: '1 1 auto', minHeight: '0', overflow: 'hidden', gridTemplateColumns: 'minmax(0, 1.25fr) minmax(0, 1fr)' });
+    Object.assign(this.slateEl.style, { position: 'relative', overflowY: 'auto', minHeight: '0', scrollbarWidth: 'none' });
+    this.shelvesEl = this.el.querySelector('.shelves');
+    Object.assign(this.shelvesEl.style, { position: 'relative', overflowY: 'auto', minHeight: '0', scrollbarWidth: 'none' });
+    if (items.length > 10) for (const r of this.rowEls) r.style.fontSize = '1.06em';
+  }
+
+  /** NOTES-38-finders: scrolls the slate so the selected row (and a little of its neighbours) is in view. */
+  follow(sel) {
+    const keep = (s, r) => {
+      if (!s || !r || s.scrollHeight <= s.clientHeight) return;
+      const top = r.offsetTop - r.offsetHeight * 0.6;
+      const bottom = r.offsetTop + r.offsetHeight * 1.6;
+      if (top < s.scrollTop) s.scrollTop = Math.max(0, top);
+      else if (bottom > s.scrollTop + s.clientHeight) s.scrollTop = bottom - s.clientHeight;
+    };
+    keep(this.slateEl, this.rowEls[sel]);
+    // The goods: the selected one's shelf (offsetTop of the shelf inside the positioned shelves box).
+    keep(this.shelvesEl, this.goodEls[sel]?.parentElement);
   }
 
   /**
@@ -60,7 +89,7 @@ export class CounterMenu {
    * @param {string} hint key hint HTML
    */
   render(items, sel, money, hint) {
-    const sig = items.map((r) => `${r.kind}|${r.tier}|${r.label}|${r.price}`).join('¦');
+    const sig = items.map((r) => `${r.kind}|${r.tier}|${r.label}|${r.price}|${r.priceLabel ?? ''}`).join('¦');
     if (sig !== this.sig) {
       this.sig = sig;
       this.build(items);
@@ -82,6 +111,7 @@ export class CounterMenu {
       this.rowEls[sel]?.classList.add('sel');
       this.goodEls[sel]?.classList.add('sel');
       s.sel = sel;
+      this.follow(sel);
     }
     if (s.money !== money) {
       s.money = money;

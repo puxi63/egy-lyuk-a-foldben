@@ -42,6 +42,12 @@ import { HoardFx } from './hoard-fx.js';
 // trolls (NOTES-24-trolls): the waking trolls move in the stone and plant materials' vertex shaders.
 import { patchTrollMaterial, trollUv } from '../trolls/pose.js';
 
+/**
+ * NOTES-42-hirelings: per-view hooks, called at the end of cullFor as hook(visible chunk mask, camera) — the hired
+ * dwarves' lanterns, Fíli's planks and the standing figures are drawn only when one of their chunks may be seen.
+ */
+export const CULL_HOOKS = [];
+
 /** Depth bands (world y) in which a layer group is drawn: shown while any player is inside the band. */
 const BANDS = { l1: [-17, 99], l2: [-76, -39], l3: [-127, -95], l4u: [-250, -146], l4h: [-250, -146], l4l: [-250, -146], l5: [-312, -228], l6: [-400, -296], l7: [-480, -347], l8: [-590, -462], l9: [-640, -576] };
 
@@ -404,6 +410,7 @@ export class Decor {
       else if (camera.position.y < MIRK_SHADE_Y) setFires(this.mirkFires, f, this.time, true);
       else setFires(this.fires, f, this.time, camera.position.y < -146 && camera.position.y > -232);
     }
+    for (const h of CULL_HOOKS) h(visible, camera); // NOTES-42-hirelings: the hired dwarves' lanterns, stair, figures
   }
 
   /** Signed distance (m, positive inside) to the nearest solid set piece; −1 when none is near. */

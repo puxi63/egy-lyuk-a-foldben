@@ -317,8 +317,34 @@ export function goodsSVG(kind, tier = 0) {
     case 'ladder': return ladderSVG();
     case 'tool': return toolSVG(tier);
     case 'bag': return bagSVG(tier);
+    case 'balinmap': return layerMapSVG(); // NOTES-38-finders
+    case 'lamp': return shimmerLampSVG(tier); // NOTES-38-finders
     default: return mugSVG();
   }
+}
+
+/** NOTES-38-finders: Balin's layer map, a rolled-out sheet with a band of inked hollows. */
+export function layerMapSVG() {
+  return `<svg viewBox="0 0 100 100" aria-hidden="true"><ellipse cx="50" cy="92" rx="34" ry="5" fill="#0006"/>
+    <path d="M14 22h72v56H14z" fill="#efdcae" stroke="#6a4a2a" stroke-width="3"/>
+    <rect x="9" y="17" width="9" height="66" rx="4.5" fill="#8a5a2a" stroke="#3a220e" stroke-width="2"/>
+    <rect x="82" y="17" width="9" height="66" rx="4.5" fill="#8a5a2a" stroke="#3a220e" stroke-width="2"/>
+    <path d="M22 40q14-4 28 0t28 0M22 62q14-4 28 0t28 0" fill="none" stroke="#5a3a1a" stroke-width="1.6"/>
+    <path d="M30 50c4-5 12-5 15 0s-3 6-8 6-10-1-7-6zM55 47c5-3 14-2 15 2s-6 5-11 4-8-3-4-6z" fill="#5a3a1a" opacity=".55"/>
+    <path d="M40 31l2 3-3 1z" fill="#a02a1a"/></svg>`;
+}
+
+/** NOTES-38-finders: the miner's lamp with a sparkle (more rays per tier). */
+export function shimmerLampSVG(tier = 1) {
+  const rays = [[50, 6, 50, 14], [74, 14, 69, 20], [26, 14, 31, 20], [84, 34, 77, 35], [16, 34, 23, 35]].slice(0, 1 + tier * 2 > 5 ? 5 : 1 + tier * 2);
+  return `<svg viewBox="0 0 100 100" aria-hidden="true"><ellipse cx="50" cy="93" rx="24" ry="5" fill="#0006"/>
+    <path d="M40 24h20l4 8H36z" fill="#6a4a2a" stroke="#2a1808" stroke-width="2"/>
+    <path d="M36 32h28l-3 40H39z" fill="#f6dc8a" stroke="#4a3010" stroke-width="2.5"/>
+    <path d="M44 36v32M56 36v32" stroke="#4a3010" stroke-width="2"/>
+    <path d="M34 72h32v10H34z" fill="#6a4a2a" stroke="#2a1808" stroke-width="2"/>
+    <path d="M50 24c0-8 8-10 8-4" fill="none" stroke="#2a1808" stroke-width="2.5"/>
+    <circle cx="50" cy="52" r="7" fill="#fff6c8" opacity=".9"/>
+    ${rays.map(([a, b, c, d]) => `<path d="M${a} ${b}L${c} ${d}" stroke="#f0d060" stroke-width="2.5" stroke-linecap="round"/>`).join('')}</svg>`;
 }
 
 /* ------------------------------------------------------------------------------------------------
