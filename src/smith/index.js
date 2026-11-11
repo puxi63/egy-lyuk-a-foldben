@@ -6,8 +6,9 @@
      tapers: effect = cap × L / (L + H), so it nears the cap and never passes it, while the price grows by SMITH.growth
      per level (base × growth^L, rounded to 10 gold, × the buyer's character price perk, × COOP.price with two players —
      the same rule as Bag End's furnishing and the party; the Green Dragon's reputation discount does not apply).
-   - Per player, as the counter's tools and bags: each player's levels belong to his save slot and character (a new
-     character in that slot starts at level 0, as his tools do); the money is the shared purse (game.money).
+   - Shared by the whole company (the user, 2026-11-11: "a kovácsnál az upgrade az coop-ba közös legyen"): one set of
+     levels for the game, bought once from the shared purse (game.money) and applied to every player and character.
+     Older saves kept levels per slot; they load as the higher level of each upgrade, so nobody loses one.
    - How the effects reach the game without touching player.js: the character perk multipliers player.js already reads
      at use time (`p.perk.power` bite, `p.perk.bag` capacity, `p.perk.climb` climb speed, `p.perk.hunger` hunger costs)
      get a layer on top (applyPerks: `p.perk` is replaced by a copy × the smith's factors; the character's own object is
@@ -63,6 +64,8 @@ export const UPGRADES = [
 
 const FACTOR_KEYS = ['power', 'swing', 'lampReach', 'lampBoost', 'bag', 'climb', 'hunger'];
 const ZERO = Object.freeze(UPGRADES.map(() => 0));
+/** The id of the shared entry in the saved `k` (older saves have a character id per slot there). */
+const SHARED_ID = 'kozos';
 
 function pct(x) {
   return Math.round(x * 1000) / 10;
@@ -128,8 +131,8 @@ export class Smith {
   constructor(shire) {
     this.shire = shire;
     this.game = shire.game;
-    /** Per save slot: { c: character id, l: [level per upgrade] } or null. */
-    this.slots = Array.from({ length: SMITH.slots }, () => null);
+    /** The company's levels, one per upgrade (shared by all players and characters). */
+    this.shared = UPGRADES.map(() => 0);
     this.menu = new Map(); // player → { sel }
     this.ui = new Map();
     this.slowT = 0;
@@ -184,10 +187,9 @@ export class Smith {
 
   /* ---------------- levels and prices ---------------- */
 
-  /** Player p's levels (his slot's, when the slot's character is his; else all 0). */
+  /** The levels that apply to player p: the company's shared set (the same for everyone). */
   levels(p) {
-    const s = this.slots[p?.slot];
-    return s && s.c === p.ch?.id ? s.l : ZERO;
+    return p ? this.shared : ZERO;
   }
 
   /** What the next level of upgrade i costs player p. */
@@ -208,14 +210,11 @@ export class Smith {
       return false;
     }
     g.money -= cost;
-    let s = this.slots[p.slot];
-    if (!s || s.c !== p.ch?.id) {
-      s = { c: p.ch?.id, l: UPGRADES.map(() => 0) };
-      this.slots[p.slot] = s;
-    }
-    s.l[i] += 1;
-    this.apply(p);
-    p.say(`${u.name}: ${s.l[i]}. szint. Most: ${u.show(factorsOf(s.l), p)}.`, 4);
+    const lv = this.shared;
+    lv[i] += 1;
+    for (const q of g.players) this.apply(q);
+    const both = g.players.length > 1 ? ' (mindkettőtöknek)' : '';
+    p.say(`${u.name}: ${lv[i]}. szint${both}. Most: ${u.show(factorsOf(lv), p)}.`, 4);
     this.hammer();
     g.saveNow?.();
     return true;
@@ -428,25 +427,30 @@ export class Smith {
       desc = `${u.desc}<br><b>Most:</b> ${now}<br><b>${L + 1}. szint:</b> ${next}`;
     }
     const coop = g.players.length > 1 ? ` · ketten: az árak ×${COOP.price}` : '';
-    return `<h3>A törpe kovács</h3><div class="smith-sub">„Amióta elhagytuk a Hegyet, népünk sokszor kovácsmunkából élt.” · ${p.ch?.name || ''} fejlesztései</div>`
+    return `<h3>A törpe kovács</h3><div class="smith-sub">„Amióta elhagytuk a Hegyet, népünk sokszor kovácsmunkából élt.” · ${g.players.length > 1 ? 'közös fejlesztések, mindkettőtökre érvényesek' : 'a társaság fejlesztései'}</div>`
       + `<div class="smith-purse">Közös erszény: ${g.money} arany${coop}</div>${list}<div class="smith-desc">${desc}</div>`
       + `<div class="smith-keys">${k.nav}<span>választás</span><i>·</i>${k.confirm}<span>${sel.i != null ? 'megrendelés' : 'bezárás'}</span><i>·</i>${k.back}<span>bezárás</span></div>`;
   }
 
   /* ---------------- save (inside the Shire's save as `k`) ---------------- */
 
-  /** Per slot [character id, level …] or 0; undefined when no level was ever bought. */
+  /**
+   * The same shape as before (one entry per slot, [id, level …] or 0), so the field stays `k`: the shared levels go in
+   * slot 0 under SHARED_ID, the other slots are 0. Undefined when no level was ever bought.
+   */
   state() {
-    if (!this.slots.some((s) => s && s.l.some((v) => v > 0))) return undefined;
-    return this.slots.map((s) => (s && s.l.some((v) => v > 0) ? [s.c, ...s.l] : 0));
+    if (!this.shared.some((v) => v > 0)) return undefined;
+    return [[SHARED_ID, ...this.shared], ...Array.from({ length: SMITH.slots - 1 }, () => 0)];
   }
 
+  /** Reads `k`: the shared entry, or an older save's per-slot entries merged as the higher level of each upgrade. */
   restore(k) {
-    this.slots = Array.from({ length: SMITH.slots }, (x, i) => {
-      const a = Array.isArray(k) ? k[i] : null;
-      if (!Array.isArray(a) || typeof a[0] !== 'string') return null;
-      return { c: a[0], l: UPGRADES.map((u, j) => clamp(Math.round(+a[j + 1]) || 0, 0, 999)) };
-    });
+    const lv = UPGRADES.map(() => 0);
+    for (const a of Array.isArray(k) ? k : []) {
+      if (!Array.isArray(a) || typeof a[0] !== 'string') continue;
+      UPGRADES.forEach((u, j) => (lv[j] = Math.max(lv[j], clamp(Math.round(+a[j + 1]) || 0, 0, 999))));
+    }
+    this.shared = lv;
     this.menu.clear();
     this.hinted = null;
     for (const p of this.game.players || []) this.apply(p); // (none yet at game start: the Shire restores before they join)
