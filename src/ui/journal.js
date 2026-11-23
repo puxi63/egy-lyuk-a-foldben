@@ -72,7 +72,7 @@ const ENTRIES = [
   // 3. A trollok barlangja: Sting (enemies/sting.js), Glamdring (finds.js, NOTES-22-secret), the rune door with two
   //    keys (underground/coop.js).
   [
-    { label: 'Fullánk', note: 'a trollok zsákmánya között · a megtalálóé marad', get: (s) => s.sting },
+    { label: 'Fullánk', note: 'a trollok zsákmánya között · mindkettőtöké', get: (s) => s.sting },
     { label: 'Glamdring', note: FAMOUS, get: trophy('glamdring') },
     { label: 'A rúnás kőajtó', note: 'csak ketten nyitható · mögötte a trollok aranyfazekai', get: (s) => !!s.coop.runaajto },
   ],
@@ -82,7 +82,7 @@ const ENTRIES = [
   ],
   // 5. Gollam tava: the Ring and the riddle game (gollum/).
   [
-    { label: 'A Gyűrű', note: 'a megtalálóé marad', get: (s) => s.ringFound },
+    { label: 'A Gyűrű', note: 'bárki viselheti, egyszerre mindketten is', get: (s) => s.ringFound },
     { label: 'Találós játék Gollammal', note: 'nyerd meg a sziget előtti parton', get: (s) => s.riddleWins > 0 },
   ],
   // 6. Bakacsinerdő gyökerei: Orkrist, the feast clearings (underground/mirkwood-fx.js), the cell and the barrels
@@ -103,7 +103,7 @@ const ENTRIES = [
   //    (coop-actions/, NOTES-23), the thrush's secret (finale/).
   [
     { label: 'A törpék hárfái', note: FAMOUS, get: trophy('harfak') },
-    { label: 'Mithrilpáncél', note: 'a megtalálóé marad', get: (s) => s.mithril },
+    { label: 'Mithrilpáncél', note: 'mindkettőtöké', get: (s) => s.mithril },
     { label: 'Thrór térképének holdbetűi', note: 'csak sarlós holdnál olvashatók · Térkép', get: (s) => s.marks.has('holdbetuk') },
     { label: 'Thrór kulcsa', note: 'az ajtó előtt, a földben', get: (s) => !!s.ep.key || s.trophies.has('thror-kulcs') },
     { label: 'Durin ajtaja', note: 'a lenyugvó nap fénye a kulcslyukon', get: (s) => !!s.ep.door },
@@ -117,7 +117,7 @@ const ENTRIES = [
   [
     { label: 'Az Arkenkő', note: FAMOUS, get: (s) => s.ark || s.trophies.has('arkenko') },
     // NOTES-16-smaug-talk: the conversation and Smaug's doubt about the dwarves (hoard/talk.js marks both).
-    { label: 'Beszélgetés Szmauggal', note: 'Bilbó a Gyűrűvel, rejtvényes címekkel', get: (s) => s.marks.has('szmaug') },
+    { label: 'Beszélgetés Szmauggal', note: 'a Gyűrűt viselve, rejtvényes címekkel', get: (s) => s.marks.has('szmaug') },
     { label: 'Szmaug kételyt ébreszt', note: '„Gondoltak a törpék rá, hogyan viszed haza a részedet?”', get: (s) => s.marks.has('szmaug-ketely') },
     { label: 'A fekete nyíl: Szmaug lezuhan', note: '', get: (s) => s.slain },
     { label: 'Ünnep és hazatérés', note: 'a kaland vége', get: (s) => s.done },

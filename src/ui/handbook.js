@@ -22,7 +22,9 @@
      action wheel, the pickup filter, the world's edge), a seventh chapter "Hősök és képességek", and the key tables
      brought in step with input.js (wheel 2 / 9 / LB, tap 1 / Ö / LB + RS).
    - NOTES-46-stations: the main-station guide's entry (Hősök › A gödörben), its stations per reached layer.
-   - NOTES-47-station-uses: "Mit adnak a fő állomások?" (Hősök › A gödörben): each station's use, reached layers only. ==== */
+   - NOTES-47-station-uses: "Mit adnak a fő állomások?" (Hősök › A gödörben): each station's use, reached layers only.
+   - NOTES-50-shared-items: "A Gyűrű" (Fegyverek; every character, both players at once, its keys), Sting and the
+     mithril shirt shared, the Ring's chords in the key tables. ==== */
 import { BAG_TIERS, COOP, FINDERS, HUNGER, LADDER_LEN, SHOP, TOOL_TIERS } from '../config.js';
 import { CHARGE, EAGLE_MAX, EAGLE_PRICE, ROCKET_MAX, ROCKET_PRICE } from '../exits.js';
 import { EDGE, EDGE_LINES } from '../edge.js';
@@ -41,6 +43,8 @@ import { EXISTING as STATION_EXISTING, USES as STATION_USES } from '../station-u
 import { LAYER_NAMES, LAYER_TOPS } from '../materials.js';
 import { ARMOUR_SHOP_MAX, ARMOUR_TIERS } from '../enemies/armour.js';
 import { COMBAT } from '../enemies/combat.js';
+import { GOBLIN } from '../enemies/goblins.js';
+import { MIRKWOOD as MIRK } from '../mirkwood-foes/index.js';
 import { TROLL } from '../trolls/index.js';
 import { BALIN } from '../safety/index.js';
 import { GARDEN } from '../shire/index.js';
@@ -60,9 +64,9 @@ const COOK_IDS = ['krumpli', 'gomba'];
 
 /** Hand-written notes on single finds (what the tables do not say). Shown only with the unlocked entry. */
 const FIND_NOTES = {
-  fullank: 'Bilbó kése a trollok zsákmányából. Kéken izzik, ha goblin, pók vagy tünde-őr van a közelben, és erősebben üt a csákánynál.',
-  gyuru: 'Bilbó a képesség gombjával felhúzza és leveszi: láthatatlan lesz. Szmaug kincstárában a sárkány mégis megérzi a szagát.',
-  mithril: 'Thorin ajándéka: a legjobb páncél (a „Páncélok” szakasz írja, mit véd). Az Erebor lezárt fegyvertárában áll.',
+  fullank: 'Bilbó kése a trollok zsákmányából. Kéken izzik, ha goblin, pók vagy tünde-őr van a közelben, és erősebben üt a csákánynál. Ha egyikőtök megtalálja, mindkettőtöké.',
+  gyuru: 'Bárki felhúzhatja és leveheti, egyszerre mindketten is: láthatatlan lesz tőle. Szmaug kincstárában a sárkány mégis megérzi a szagát.',
+  mithril: 'Thorin ajándéka: a legjobb páncél (a „Páncélok” szakasz írja, mit véd). Az Erebor lezárt fegyvertárában áll. Ha egyikőtök megtalálja, mindketten viselitek.',
   arkenko: 'A Hegy Szíve. A használat gombjával veszed fel; Zsáklak vitrinjébe kerül.',
   dohany: 'A szomszéd hobbit is ezt adja egy mathomért cserébe.',
   almaspite: 'A szomszéd hobbit adja egy mathomért cserébe.',
@@ -318,7 +322,7 @@ function shopEntries(add, game, S) {
     title: 'Létrák',
     meta: `${SHOP.ladderPack} darab · ${SHOP.ladderPrice} arany`,
     body: p(`Egy létra ${LADDER_LEN} m hosszú: a falhoz támasztod (létra gomb), és felmászol rajta. Mászni fárasztóbb, mint járni: ${num(HUNGER.perClimbSecond, 1)} pont fogy a tányérról másodpercenként.`)
-      + p('Lefelé a lefelé mászás gombjával mászol (Shift / C, a 2. játékos jobb Ctrl / ., kontrolleren LB nyomva tartva). Egy létra tetején állva ugyanezzel a gombbal lépsz rá a létrára fentről, és indulsz lefelé; ilyenkor az előre gomb a létra tetején megállít, nem lép le a mélybe. Ha zuhanás közben létra mellett esel el, elkapod.')
+      + p('Lefelé a lefelé mászás gombjával mászol (Shift / C, a 2. játékos jobb Ctrl / ., kontrolleren LB nyomva tartva). Egy létra tetején állva ugyanezzel a gombbal lépsz rá a létrára fentről, és indulsz lefelé; ilyenkor az előre gomb a létra tetején megállít, nem lép le a mélybe. Ha zuhanás közben létra mellett esel el, elkapod. Mászás közben le is ugorhatsz: tartsd hátra vagy oldalra az irányt, és nyomd meg az ugrást (Szóköz, a 2. játékos jobb Shift / Num 0, kontrolleren A); vigyázz, nagy magasságból az esés fáj.')
       + p(`Induláskor ${SHOP.startLadders} létrád van; a pultnál ${SHOP.ladderPack} darab ${gold(SHOP.ladderPrice)}.`),
   }));
   add(C, 'Kellékek', true, () => ({
@@ -441,13 +445,24 @@ function foeEntries(add, game, S) {
   add(C, 'Goblinok', S.goblin, () => ({
     title: 'Ha elkap egy goblin',
     meta: 'lerázás',
-    body: p('A goblin elkap, és ellop egy leletet a zsákodból. <b>Rázd le:</b> nyomd többször gyorsan az ásás gombot. Ha a társadat kapják el, üsd meg a goblint a csákánnyal vagy dobd meg: elengedi.')
+    body: p('Mielőtt elkap, a goblin felrikolt és feléd kap: ha ekkor elugrasz előle, nem ér el. Ha elkap, ellop egy leletet a zsákodból. '
+      + `<b>Rázd le:</b> nyomd meg ${GOBLIN.struggle}-szor gyorsan az ásás gombot. Ha a társadat kapják el, üsd meg a goblint a csákánnyal vagy dobd meg: elengedi.`)
+      + p(`Ha kiszabadultál (vagy a goblin elfutott a leleteddel), a goblinok ${num(GOBLIN.grace / 60, 1)} percig békén hagynak. Egyszerre legfeljebb ${GOBLIN.maxChasers} goblin ered a nyomodba.`)
       + p('Az elejtett leletet felveheted, ha hozzáérsz. Az ütés (csákány) és a kődobás senkit nem öl meg: elűzi őket.'),
   }));
   add(C, 'Fegyverek', S.sting, () => ({
     title: 'Fullánk',
     meta: 'a trollok zsákmányából',
-    body: p(`Aki megtalálja, megtartja. A csákány helyett ezzel szúrsz: ${num(COMBAT.power.sting / COMBAT.power.pick, 1)}-szer erősebb ütés, kicsit messzebbre is elér. Kéken izzik, ha ellenség van a közelben.`),
+    body: p(`Ha egyikőtök megtalálja, mindkettőtöké: a társad kezében is ott van (a később csatlakozó társnál is). A csákány helyett ezzel szúrsz: ${num(COMBAT.power.sting / COMBAT.power.pick, 1)}-szer erősebb ütés, kicsit messzebbre is elér. Kéken izzik, ha ellenség van a közelben.`),
+  }));
+  // NOTES-50-shared-items: the Ring, worn by any character, by both players at once.
+  add(C, 'Fegyverek', S.found.has('gyuru'), () => ({
+    title: 'A Gyűrű',
+    meta: 'X · Á · D-pad bal · guggolva: C + X · . + Á · LB + D-pad bal',
+    body: p('Gollam tava előtt, az alagút padlóján fekszik. Elég egyikőtöknek felvenni: onnantól <b>bárki</b> felhúzhatja és leveheti, egyszerre mindketten is, egymástól függetlenül.')
+      + p('Bilbó, Thorin, Balin és Bofur a képesség gombjával húzza fel (X; a 2. játékosnak Á; kontrolleren D-pad bal). Bárki felhúzhatja guggolva is: a lefelé mászás gombját nyomva tartva nyomd meg a képesség gombját (C + X; . + Á; LB + D-pad bal). Kíli és Bombur csak így, mert a képesség gombja náluk az íj és a roham.')
+      + p('Felhúzva láthatatlan vagy: a goblinok és a trollok nem vesznek észre, és aki fog, elenged; a pókok sem látnak, a tünde-őr kulcsait elcsenheted, a cellából kisurransz. A társad csak egy halvány derengést lát belőled. Minden szürke, a hangok tompák.')
+      + p('Gollam a nyomába szegődik annak, aki sokáig viseli (az idő akkor is egyszer számít, ha egyszerre ketten hordjátok). Szmaug megérzi a szagodat, de ha a kincstárban viseled, és felébred, beszélgetni kezd veled. Gollam találós kérdésénél bárki megkérdezheti: „Mi van a zsebemben?”'),
   }));
   ARMOUR_TIERS.forEach((t, k) => {
     if (!k) return;
@@ -461,7 +476,7 @@ function foeEntries(add, game, S) {
         t.steal < 1 ? `a goblinok és trollok csak ${pct(t.steal)} eséllyel lopnak a zsákodból` : '',
         t.knock < 1 ? `fele akkora hátralökés, ha elkapnak (×${num(t.knock)})` : '',
         t.rockProof ? 'a hulló kövek nem döntenek le' : '',
-      ].filter(Boolean)) + p('A páncél nem lassít.') + (t.locked ? '' : p(`Ára: ${gold(t.price)} a pultnál.`)),
+      ].filter(Boolean)) + p('A páncél nem lassít.') + (t.locked ? p('Ha egyikőtök megtalálja, mindketten viselitek.') : p(`Ára: ${gold(t.price)} a pultnál.`)),
     }));
   });
   add(C, 'A mélység lakói', S.troll, () => ({
@@ -473,12 +488,15 @@ function foeEntries(add, game, S) {
   add(C, 'A mélység lakói', S.spider, () => ({
     title: 'Pókok',
     meta: `${LAYER_NAMES[5]}`,
-    body: p('Bakacsinerdő gyökerei között pókok vadásznak: hálóba csavarnak. Üsd vagy dobd meg őket, és elmenekülnek; a társad kiszabadíthat. Bilbó csúfolódó dalával magához csalja őket (csúfolódás gomb), hogy a többiek elvegyenek, amit akarnak.'),
+    body: p('Bakacsinerdő gyökerei között pókok vadásznak: hálóba csavarnak. Mielőtt rád vetik magukat, felágaskodnak és sziszegnek: ugorj félre. '
+      + `Ha gúzsba kötnek, nyomd meg ${MIRK.struggleWrap}-szor az ásás gombot; a gubót ${MIRK.struggleCocoon} rántással szakítod szét. Üsd vagy dobd meg őket, és elmenekülnek; a társad kiszabadíthat. Bilbó csúfolódó dalával magához csalja őket (csúfolódás gomb), hogy a többiek elvegyenek, amit akarnak.`)
+      + p(`A tünde-őrök kiáltanak, mielőtt elfognak. Ha kiszabadultál (hálóból, gubóból vagy a cellából), a pókok és az őrök ${num(MIRK.grace / 60, 1)} percig békén hagynak.`),
   }));
   add(C, 'A mélység lakói', S.smaug, () => ({
     title: 'Szmaug',
     meta: `${LAYER_NAMES[8]}`,
-    body: p('A sárkány a kincsén alszik. Az ásás (főleg az aranyban), a futás és a nagy esés zajt csap: ha a zajmérő megtelik, Szmaug felriad, és tüzet fúj a leghangosabbra. Normál módban nem halsz meg, de hátravet, és egy lelet elég a zsákodban.')
+    body: p(`A sárkány a kincsén alszik. Az ásás (főleg az aranyban), a futás és a nagy esés zajt csap: ha a zajmérő megtelik, Szmaug felriad, és tüzet fúj a leghangosabbra. Normál módban nem halsz meg, de hátravet, és egy lelet elég a zsákodban. `
+      + `Tűzfúvás után ${num((game.hoard?.fireAgain ?? 60) / 60, 1)} percig a zaj nem ébreszti fel újra (legfeljebb mocorog), és akit megperzselt, azt addig nem éri el a tüze.`)
       + p('Lopakodj (a lefelé mászás gombját nyomva tartva), Bilbó halkabban jár. Szmaug ellen harcolni nem lehet.'),
   }));
 }
@@ -669,7 +687,7 @@ function controlEntries(add) {
     body: table([
       ['W A S D', 'járás'], ['egér', 'nézelődés'], ['bal egérgomb / F', 'ásás'], ['jobb egérgomb / Q', 'létra lerakása'],
       ['Szóköz', 'ugrás, mászás'], ['Shift / C', 'lefelé mászás, lopakodás'], ['E', 'használat (pult, ajtók, bútorok)'],
-      ['G / középső egérgomb', 'kődobás'], ['X', 'a karakter képessége (Bilbónak a Gyűrű)'], ['T', 'csúfolódás (Bilbó)'],
+      ['G / középső egérgomb', 'kődobás'], ['X', 'a karakter képessége (a megtalált Gyűrű, ha nincs külön képessége)'], ['C + X', 'a Gyűrű fel / le (bárkinek)'], ['T', 'csúfolódás (Bilbó)'],
       ['R', 'a Sasok hívása'], ['C + R', 'töltet lerakása, meggyújtása'], ['V', 'kötélbiztosítás'], ['H', 'lámpa magasra'],
       ['1', 'kopogtatás a falon'], [`${digit(WHEEL_KEYS.mouse)} (nyomva tartva)`, 'Akciókerék: válassz az egérrel, engedd el'],
       ['B', 'Thrór térképe'], ['J / Tab', 'a szerződés tekercse'],
@@ -680,7 +698,7 @@ function controlEntries(add) {
     meta: 'F2: a billentyűzet jobb fele',
     body: p('Az F2 billentyűvel csatlakozik egy második játékos a billentyűzet jobb oldalán (ha nincs kontroller).') + table([
       ['nyilak', 'járás'], ['I J K L', 'nézelődés'], ['U', 'ásás'], ['O', 'létra'], ['jobb Shift / Num 0', 'ugrás'], ['jobb Ctrl / .', 'lefelé mászás'],
-      ['P', 'használat'], ['Ő', 'kődobás'], ['Á', 'képesség'], ['Ű', 'csúfolódás'], ['É', 'Sasok'], ['. + É', 'töltet'], [',', 'kötél'], ['-', 'lámpa'],
+      ['P', 'használat'], ['Ő', 'kődobás'], ['Á', 'képesség (vagy a Gyűrű)'], ['. + Á', 'a Gyűrű'], ['Ű', 'csúfolódás'], ['É', 'Sasok'], ['. + É', 'töltet'], [',', 'kötél'], ['-', 'lámpa'],
       ['Ö', 'kopogtatás a falon'], [`${digit(WHEEL_KEYS.keys2)} (nyomva tartva)`, 'Akciókerék: válassz a nyilakkal, engedd el'],
       ['N', 'szerződés'], ['Ú', 'térkép'], ['Enter / Backspace', 'menükben: választás / vissza'],
     ]),
@@ -691,7 +709,7 @@ function controlEntries(add) {
     body: p('Egy új kontroller Start gombja csatlakoztatja a második játékost.') + table([
       ['bal kar', 'járás'], ['jobb kar', 'nézelődés'], ['RT / RB', 'ásás'], ['LT / Y', 'létra'], ['A', 'ugrás, választás'], ['LB (tartva)', 'lefelé mászás, lopakodás'],
       ['LB (nyomva tartva, más gomb nélkül)', 'Akciókerék: válassz a bal karral, engedd el'],
-      ['X', 'használat'], ['B', 'kődobás · menükben vissza'], ['D-pad bal', 'képesség'], ['D-pad jobb', 'csúfolódás'], ['D-pad fel', 'Sasok'], ['LB + D-pad fel', 'töltet'], ['D-pad le', 'kötél'],
+      ['X', 'használat'], ['B', 'kődobás · menükben vissza'], ['D-pad bal', 'képesség (vagy a Gyűrű)'], ['LB + D-pad bal', 'a Gyűrű'], ['D-pad jobb', 'csúfolódás'], ['D-pad fel', 'Sasok'], ['LB + D-pad fel', 'töltet'], ['D-pad le', 'kötél'],
       ['jobb kar benyomva', 'lámpa (LB nélkül)'], ['LB + jobb kar benyomva', 'kopogtatás a falon'], ['bal kar benyomva', 'térkép'],
       ['View', 'szerződés (2 mp tartva: a 2. játékos kiszáll)'], ['LB + View', 'következő zeneszám'], ['Start (Menu)', 'szünet'],
     ]),
@@ -702,7 +720,7 @@ function controlEntries(add) {
     body: p(`A különleges akciókat egy kerékből is elérheted. Tartsd nyomva a <b>${digit(WHEEL_KEYS.mouse)}</b>-es gombot (a billentyűzet jobb felén játszó társ a <b>${digit(WHEEL_KEYS.keys2)}</b>-est, kontrolleren az <b>LB</b>-t, más gomb nélkül), és ${num(WHEEL.hold, 1)} másodperc múlva kinyílik a pergamenkerék a saját képernyőfeleden. Az egérrel (a nyilakkal, a bal karral) válaszd ki az akciót, és engedd el a gombot: megtörténik. Ha semmit sem választasz (az egér vagy a kar középen), elengedve nem történik semmi.`)
       + p(`A játék közben nem áll meg: a társad tovább játszik, te lassabban lépsz (×${num(WHEEL.slow)}), és az egér nem forgatja a nézetet, amíg a kerék nyitva van; kontrollerrel és a nyilakkal választva meg is állsz.`)
       + p('A kerékben csak az látszik, amit már megszereztél vagy megismertél, és minden akció mindig ugyanott van: fent a létra, jobbra fent a Sasok, jobbra a töltet, jobbra lent a kopogtatás, lent az evés a zsákból, balra lent a lámpa, balra a kődobás, balra fent a kötél. Mindegyiknél ott a darabszám vagy az ár, a visszatöltődés köre, és kicsiben a saját gyorsgombja. A szürke akció most nem használható, alatta röviden az ok („Csak a föld alatt”, „Nincs nálad”…).')
-      + p('Kontrolleren az LB rövid megnyomása, a lopakodás (LB + bal kar) és az LB-s gombpárok (LB + D-pad fel: töltet, LB + jobb kar benyomása: kopogtatás, LB + View: következő zeneszám) ugyanúgy működnek, mint eddig. Ha új akciót szerzel, a játék egyszer szól: „Új akció: … — tartsd nyomva …”.'),
+      + p('Kontrolleren az LB rövid megnyomása, a lopakodás (LB + bal kar) és az LB-s gombpárok (LB + D-pad fel: töltet, LB + D-pad bal: a Gyűrű, LB + jobb kar benyomása: kopogtatás, LB + View: következő zeneszám) ugyanúgy működnek, mint eddig. Ha új akciót szerzel, a játék egyszer szól: „Új akció: … — tartsd nyomva …”.'),
   }));
   add(C, '', true, () => ({
     title: 'Thrór térképe',

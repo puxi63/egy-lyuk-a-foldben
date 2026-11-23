@@ -424,7 +424,8 @@ export class EreborFx {
     if (game) this.updateFlashes(dt, game);
   }
 
-  /** The mithril shirt is found: it flies to the finder, who wears it (armour tier 4) and the case keeps its place. */
+  /** The mithril shirt is found: it flies to the finder, who wears it (armour tier 4) and the case keeps its place.
+   *  NOTES-50-shared-items: the partner wears it too (shared-items.js; also a player who joins later). */
   takeMithril(p) {
     this.mithrilTaken = true;
     this.mithrilBy = p.ch?.id || null;
@@ -434,11 +435,12 @@ export class EreborFx {
     const done = () => {
       p.incoming = Math.max(0, (p.incoming || 0) - 1);
       p.setArmour(Math.max(p.armour | 0, 4));
+      for (const q of game?.players || []) if (q !== p && !q.choosing && q.ch && (q.armour | 0) < 4) q.setArmour(4);
       game?.bagEnd?.addTrophy(type);
       this.flash(p, 1, 1.6);
       p.say('A mithrilpáncél! Ezüstösen csillan, könnyű, mint a toll, és erősebb az acélnál.', 7);
       p.say('Mostantól a lehulló kövek nem ártanak neked. (Zsáklak vitrinjében is helye van.)', 7);
-      for (const q of game?.players || []) if (q !== p && !q.choosing) q.say(`${p.ch.name} megtalálta a mithrilpáncélt!`, 5);
+      for (const q of game?.players || []) if (q !== p && !q.choosing) q.say(`${p.ch.name} megtalálta a mithrilpáncélt: te is viseled!`, 5);
       game?.saveNow?.();
     };
     this.flash(p, 0.7, 0.9);

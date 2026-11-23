@@ -16,6 +16,8 @@ import { flame } from './shell.js';
 const WALNUT = 0x7a5236;
 const OAKT = 0xb88a5a;
 const DARK = 0x5a3a24;
+/** The bedroom's clothes stand (the wardrobe's top tier): the south-west corner, clear of the door and the beds. */
+const STAND = [-11.62, 0.42];
 const IRON = 0x8a8a8a;
 const BRASS = 0xffffff;
 const BEAM = 0xd8c8b4;
@@ -997,16 +999,18 @@ export const SLOTS = [
       }
       b.box(1.0, 0.06, 0.55, { x, y: 0, z: z - 0.29, tile: 'wood', tint: DARK });
       if (k >= 2) {
-        // A clothes stand beside it with his red waistcoat and his coat.
-        const sx = -10.0;
-        const sz = 3.85;
+        // A clothes stand with his red waistcoat and his coat, in the room's south-west corner (it stood beside the
+        // wardrobe at (−10.0, 3.85) before, right in front of the door to the corridor, and shut the room: a player in
+        // the bedroom could not get out once the top tier was bought).
+        const sx = STAND[0];
+        const sz = STAND[1];
         b.cyl(0.02, 0.025, 1.6, 6, { x: sx, y: 0, z: sz, tile: 'wood', tint: DARK });
         b.cyl(0.18, 0.2, 0.03, 10, { x: sx, y: 0, z: sz, tile: 'wood', tint: DARK });
         b.lathe([[0.02, 0], [0.16, -0.06], [0.18, -0.5], [0.15, -0.6], [0.0, -0.6]], 10, { x: sx, y: 1.55, z: sz, tile: 'velvet', tint: 0x6a4a30, sz: 0.6 });
         b.lathe([[0.02, 0], [0.13, -0.05], [0.14, -0.36], [0.0, -0.36]], 10, { x: sx + 0.03, y: 1.42, z: sz - 0.08, tile: 'velvet', tint: 0x9a2a22, sz: 0.55 });
         for (let i = 0; i < 4; i++) b.sphere(0.008, { x: sx + 0.03, y: 1.38 - i * 0.07, z: sz - 0.155, tile: 'brass' }, 4, 3);
       }
-      return { colliders: [{ x, z: z - 0.29, hw: 0.52, hd: 0.3 }, ...(k >= 2 ? [{ x: -10.0, z: 3.85, hw: 0.18, hd: 0.18 }] : [])] };
+      return { colliders: [{ x, z: z - 0.29, hw: 0.52, hd: 0.3 }, ...(k >= 2 ? [{ x: STAND[0], z: STAND[1], hw: 0.18, hd: 0.18 }] : [])] };
     },
   },
 
