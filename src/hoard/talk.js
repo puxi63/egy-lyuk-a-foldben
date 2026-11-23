@@ -106,9 +106,29 @@ const shuffle = (a) => {
   return a;
 };
 
-/** True when player p may hold the conversation: Bilbo wearing the Ring inside the treasury. */
+/**
+ * True when player p may hold the conversation: wearing the Ring inside the treasury. NOTES-50-shared-items: any
+ * character (the Ring is shared once found; was Bilbo only).
+ */
 export function canSpeak(game, p, inHoard) {
-  return !!p && !p.choosing && p.dead <= 0 && !p.riding && p.ch?.id === 'bilbo' && !!game.gollum?.isInvisible?.(p) && inHoard(p.pos);
+  return !!p && !p.choosing && p.dead <= 0 && !p.riding && !!p.ch && !!game.gollum?.isInvisible?.(p) && inHoard(p.pos);
+}
+
+/** The speaker's name in the instrumental case ("Szmaug Bilbóval beszél"), per character id. */
+const WITH = { bilbo: 'Bilbóval', thorin: 'Thorinnal', balin: 'Balinnal', bofur: 'Bofurral', bombur: 'Bomburral', kili: 'Kílivel' };
+
+/**
+ * NOTES-50-shared-items: the blurts as a non-Bilbo speaker would blurt them (his own name; Thorin does not "come with
+ * Thorin": his grandfather Thrór's treasure, book ch. 1). Bilbo keeps the book's lines.
+ */
+function blurtsFor(speaker) {
+  const id = speaker?.ch?.id;
+  if (!id || id === 'bilbo') return BLURTS;
+  return BLURTS.map((b) => {
+    if (b.id === 'nev') return { ...b, text: `${speaker.ch.name} vagyok.`, reply: `${speaker.ch.name}… Megjegyeztem, tolvaj! Most már tudom, kit keressek!` };
+    if (b.id === 'torpek' && id === 'thorin') return { ...b, text: 'A nagyapám, Thrór kincséért jöttem a társaimmal.' };
+    return b;
+  });
 }
 
 /* ---------------- the panel's look (NOTES-33-smaug-ui): CSS only, injected once ----------------
@@ -271,14 +291,14 @@ export class SmaugTalk {
       this.choices = shuffle([
         { text: LINES.boastGood, good: true, boast: true },
         { text: LINES.boastBad, good: false, boast: true, reply: LINES.boastAngry },
-        { ...shuffle([...BLURTS])[0], good: false },
+        { ...shuffle([...blurtsFor(this.speaker)])[0], good: false },
       ]).map((c) => (c.id ? { text: c.text, good: false, reply: c.reply } : c));
       this.start('ask', LINES.boast);
       return;
     }
     const left = this.earned.filter((t) => !this.used.has(t.id));
     const goods = shuffle([...left]).slice(0, Math.random() < 0.5 && left.length > 1 ? 2 : 1);
-    const bads = shuffle([...BLURTS]).slice(0, goods.length > 1 ? 2 : 3);
+    const bads = shuffle([...blurtsFor(this.speaker)]).slice(0, goods.length > 1 ? 2 : 3);
     this.choices = shuffle([
       ...goods.map((t) => ({ text: t.text, good: true, title: t, reply: t.reply })),
       ...bads.map((b) => ({ text: b.text, good: false, reply: b.reply })),
@@ -327,7 +347,7 @@ export class SmaugTalk {
     fin.patch = true;
     const text = 'Szmaug csupasz foltja: bal mellén, a mélyedésben. A rigó meghallja, amikor elmondod a törpéknek, és elviszi a hírt Bárdnak: a fináléban a fekete nyíl biztosan talál.';
     game.players.forEach((q, k) => game.tutorial?.hint?.(k, q, `csupaszfolt-${k}`, text, 10));
-    for (const q of this.watchers()) q.say('Bilbó meglátta Szmaug csupasz foltját!', 4);
+    for (const q of this.watchers()) q.say(`${this.speaker.ch?.name || 'A társad'} meglátta Szmaug csupasz foltját!`, 4);
     this.patchLearned = true;
     game.saveNow?.();
   }
@@ -364,7 +384,7 @@ export class SmaugTalk {
       if (k >= 0) {
         this.hint = { k, by: p.ch?.name || 'A társad' };
         this.owner.addNoise(p, TALK.whisper);
-        p.say('Odasúgtad Bilbónak a választ.', 2);
+        p.say('Odasúgtad a választ.', 2);
       }
       return true;
     }
@@ -377,7 +397,7 @@ export class SmaugTalk {
     this.t += dt;
     const sp = this.speaker;
     const o = this.owner;
-    // The speaker must stay: Bilbo invisible in the treasury. Taking off the Ring: Smaug sees him (fire).
+    // The speaker must stay: invisible (the Ring) in the treasury. Taking off the Ring: Smaug sees him (fire).
     if (!this.game.players.includes(sp) || sp.choosing || sp.dead > 0 || !o.inHall(sp)) {
       this.finish('abort');
       return false;
@@ -494,8 +514,7 @@ export class SmaugTalk {
     }).join('')}</div>`;
     const keys = (t) => `<div class="st-k">${t}</div>`;
     if (!speaker) {
-      const who = this.speaker.ch?.name || 'Bilbó';
-      const top = head(`Szmaug ${who === 'Zsákos Bilbó' ? 'Bilbóval' : who} beszél`);
+      const top = head(`Szmaug ${WITH[this.speaker.ch?.id] || 'Bilbóval'} beszél`);
       if (this.phase === 'ask') {
         return top + say(this.line) + list(false) + bar
           + keys(this.hint ? 'Odasúgtad a választ.' : `${g.interact} súgj neki (halkan: Szmaug is meghallhatja) · vagy csak figyelj`);

@@ -27,7 +27,8 @@ export const BILBO_RIDDLES = [
   { id: 'tojas', label: 'A pánt nélküli láda', text: 'Pánt nélküli, kulcs nélküli,<br>fedél nélküli ládika,<br>mégis arany kincs van benne.', reply: 'Tojások! Tojássok, drágaszágom!', fail: 0.42 },
   { id: 'lab', label: 'Lábatlan az egylábún', text: 'Lábatlan feküdt az egylábún,<br>kétláb ült mellé a háromlábún,<br>négyláb is kapott valamit.', reply: 'Hal a kis asztalon, ember a széken, és a macska kapja a szálkát!', fail: 0.36 },
 ];
-/** "What have I got in my pocket?" (only Bilbo, only with the Ring found, once): Gollum's three guesses, then he loses. */
+/** "What have I got in my pocket?" (any player once the Ring is found — NOTES-50-shared-items; once): Gollum's three
+ *  guesses, then he loses. */
 export const POCKET = { id: 'zseb', label: 'Mi van a zsebemben?', text: 'Mi van a zsebemben?', guesses: ['Kezek!', 'Kés!', 'Madzag… vagy semmi!'] };
 
 /** Timing (seconds) and the rewards. */
@@ -93,8 +94,8 @@ export class RiddleGame {
   /** The riddles the player may ask now (Bilbo's, not yet asked in this game; the pocket question when allowed). */
   playerRiddles() {
     const list = BILBO_RIDDLES.filter((r) => !this.asked.has(r.id));
-    const bilbo = this.participants().some((p) => p.ch.id === 'bilbo');
-    if (bilbo && this.owner.ringFound() && !this.owner.memory.pocket) list.push(POCKET);
+    // NOTES-50-shared-items: the Ring is everybody's once found, so any player may ask it (was: only Bilbo).
+    if (this.participants().length && this.owner.ringFound() && !this.owner.memory.pocket) list.push(POCKET);
     return list;
   }
 

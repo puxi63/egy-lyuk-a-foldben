@@ -13,20 +13,30 @@ import { lifeOf } from '../modes/rules.js'; // modes (NOTES-15-modes): Kihívás
 
 /** Tuning (metres, seconds, metres per second). */
 export const GOBLIN = {
-  maxActive: 6,
+  maxActive: 4, // NOTES-51-fewer-captures: was 6
+  maxChasers: 2, // NOTES-51: at most this many goblins go after one player at once (the rest keep patrolling)
+  respawn: [5, 5], // seconds until the next Goblin-town spawn after one: min + random span (NOTES-51: was 3 + 0–4)
   radius: 0.28,
   spheres: [0.32, 0.9],
   gravity: 18,
   climb: 2.4,
-  speed: { patrol: 1.3, chase: 3.3, flee: 4.3, loot: 3.5 },
-  sight: 8, // seen by the lamp's light (line of sight)
-  sightBright: 11, // a strong light (lightPower ≥ 2) is seen from further…
+  speed: { patrol: 1.3, chase: 2.9, flee: 4.3, loot: 3.5 }, // NOTES-51: chase was 3.3 (the player walks 3.6)
+  sight: 7, // seen by the lamp's light (line of sight); NOTES-51: was 8
+  sightBright: 9.5, // a strong light (lightPower ≥ 2) is seen from further… (NOTES-51: was 11)
   scare: 3.5, // …but goblins will not come closer to it than this
   noise: 15, // digging is heard through the rock
   noiseBilbo: 8, // Bilbo digs quietly (TERV 0.3)
   grabReach: 0.9,
-  hold: 1.8, // seconds a goblin holds the player before it steals
-  struggle: 5, // dig-button presses that shake a goblin off
+  // NOTES-51: the warning before a grab. Within cueReach it screeches and reaches out (the player gets a line); it may
+  // grab only `cue` seconds later and only if he is still within grabReach.
+  cue: 0.7,
+  cueReach: 1.9,
+  hold: 2.6, // seconds a goblin holds the player before it steals (NOTES-51: was 1.8)
+  struggle: 3, // dig-button presses that shake a goblin off (NOTES-51: was 5; a troll's grip still takes 5)
+  // NOTES-51 (the user: "legyen mondjuk 1 perc nyugalom kiszabadulás után"): seconds after a grab ends (shaken off,
+  // freed by a partner, or robbed and shoved away) during which no goblin goes after that player. Was 2.5 / 1.5 (grab
+  // only; they still chased him).
+  grace: 60,
   shove: 6.5, // knockback speed of the shove
   despawn: 42, // gone when this far from every player (and not seen)
   lootEscape: 28, // a looter this far from every player is gone with the find
@@ -72,6 +82,7 @@ export class Goblin {
     this.hearT = 0;
     this.raider = false;
     this.screech = 0;
+    this.cueT = -1; // NOTES-51: the warning before a grab (< 0: none running)
     this.game.scene.add(this.group);
     this.sync(0);
   }
@@ -86,6 +97,7 @@ export class Goblin {
   set(state, t = 0) {
     this.state = state;
     this.t = t;
+    this.cueT = -1; // NOTES-51: the warning before a grab (< 0: none running)
   }
 
   /** Centre of the body (for hits and distances). */
@@ -97,7 +109,7 @@ export class Goblin {
 
   /** Whether this goblin notices player p now: the lamp seen in line of sight, or the digging heard. */
   notices(p) {
-    if (!this.mgr.canTarget(p)) return false;
+    if (!this.mgr.canChase(p)) return false; // NOTES-51: not a player in his grace
     const d = this.pos.distanceTo(p.pos);
     const light = this.mgr.lightPower(p);
     const noisy = this.mgr.noiseT[p.slot] > 0;
@@ -141,6 +153,8 @@ export class Goblin {
         speed = GOBLIN.speed.patrol;
         if (scan) {
           for (const p of this.game.players) {
+            // NOTES-51-fewer-captures: no more than GOBLIN.maxChasers after one player at once.
+            if (mgr.chasers(p) >= GOBLIN.maxChasers) continue;
             if (this.notices(p)) {
               this.target = p;
               this.set('alert');
@@ -162,7 +176,7 @@ export class Goblin {
       }
       case 'chase': {
         const p = this.target;
-        if (!p || !mgr.canTarget(p)) {
+        if (!p || !mgr.canChase(p)) {
           this.set('patrol');
           break;
         }
@@ -184,8 +198,22 @@ export class Goblin {
         want = p.pos;
         speed = GOBLIN.speed.chase;
         const dy = p.pos.y - this.pos.y;
-        if (Math.hypot(p.pos.x - this.pos.x, p.pos.z - this.pos.z) < GOBLIN.grabReach && Math.abs(dy) < 1.3 && !p.held && mgr.canGrab(p)) this.grab(p);
-        else pose.reach = Math.max(0, 1 - (d - 0.8) / 1.5);
+        pose.reach = Math.max(0, 1 - (d - 0.8) / 1.5);
+        // NOTES-51-fewer-captures: a screech first, the grab only after GOBLIN.cue seconds and only if still in reach.
+        const hd = Math.hypot(p.pos.x - this.pos.x, p.pos.z - this.pos.z);
+        const level = Math.abs(dy) < 1.3;
+        if (this.cueT < 0) {
+          if (hd < GOBLIN.cueReach && level && !p.held && mgr.canGrab(p)) {
+            this.cueT = 0;
+            this.screech = 0.6;
+            mgr.warn(p, this.pos, 'screech', 'Egy goblin rád veti magát — fuss!');
+          }
+        } else {
+          this.cueT += dt;
+          pose.reach = 1;
+          if (hd > GOBLIN.cueReach * 1.6 || !level) this.cueT = -1;
+          else if (this.cueT >= GOBLIN.cue && hd < GOBLIN.grabReach && !p.held && mgr.canGrab(p)) this.grab(p);
+        }
         break;
       }
       case 'grab': {
@@ -395,8 +423,9 @@ export class Goblin {
       p.say(`Egy goblin elvitte: ${took.name}! Üsd meg vagy dobd meg, és elejti.`, 4.5);
     } else if (p.bag.length === 0) p.say('Üres a zsákod: a goblin dühösen ellökött.', 3);
     else p.say('A goblin a zsákodba markolt, de a páncélod megvédett.', 3.5);
-    // A moment's grace: the next goblin cannot grab the victim at once.
+    // NOTES-51: the grace — no goblin goes after the victim for a while (the line follows the theft's own line).
     p.graceT = 2.5;
+    mgr.startGrace(p, false);
     this.flee(p.pos, took ? 30 : 4);
     mgr.sound('cackle', this.pos);
   }
@@ -434,7 +463,8 @@ export class Goblin {
       const p = this.held;
       this.release();
       p.graceT = 1.5;
-      p.say('Kiszabadultál!', 2);
+      mgr.startGrace(p, false);
+      if (kind !== 'struggle') p.say('Kiszabadultál! A goblinok egy időre békén hagynak.', 3); // (struggling: input() says its own line)
     }
     this.scared = power >= 1.5 || kind === 'arrow';
     if (this.loot) {

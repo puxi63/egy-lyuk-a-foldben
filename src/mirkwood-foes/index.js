@@ -24,8 +24,8 @@ import { Webs, WEB } from './webs.js';
 
 /** Escapes and timings (seconds, presses). */
 export const MIRK = {
-  struggleWrap: 5, // dig presses that break free while being wrapped
-  struggleCocoon: 10, // dig presses that tear the cocoon open
+  struggleWrap: 3, // dig presses that break free while being wrapped (NOTES-51-fewer-captures: was 5)
+  struggleCocoon: 6, // dig presses that tear the cocoon open (NOTES-51: was 10)
   hang: 1.1, // metres a cocoon is hoisted
   lockPicks: 12, // dig presses at the cell door to pick the lock (Bilbo, the burglar: 7)
   lockPicksBilbo: 7,
@@ -33,7 +33,11 @@ export const MIRK = {
   ringSlip: 6, // seconds an invisible prisoner waits at the door before he slips out
   captureFade: 0.6,
   doorOpen: 20, // seconds an opened door stays open
-  grace: 3,
+  // NOTES-51-fewer-captures (the user: "legyen mondjuk 1 perc nyugalom kiszabadulás után"): seconds after an escape
+  // (struggled or cut free, the cocoon torn, a wrap broken off, a cell door opened) during which the spiders and the
+  // guards leave that player alone: no new drop, chase, wrap or capture. Was 3 (+2 after a cell).
+  grace: 60,
+  warnEvery: 3, // seconds: the warning line (spider / guard about to catch) at most this often per player
 };
 
 /** Key names per control scheme (as enemies/index.js and tutorial.js). */
@@ -168,6 +172,22 @@ export class MirkwoodFoes {
     return this.canTarget(p);
   }
 
+  /** NOTES-51-fewer-captures: after an escape the spiders and guards leave this player alone for MIRK.grace seconds. */
+  startGrace(p) {
+    p.mirkGrace = MIRK.grace;
+  }
+
+  /**
+   * NOTES-51-fewer-captures: the warning cue before a catch (a spider rears up hissing, a guard reaches out calling):
+   * the sound at the foe and, at most every MIRK.warnEvery seconds, one HUD line for that player.
+   */
+  warn(p, at, sound, text) {
+    this.sound(sound, at);
+    if ((p.mirkWarnT || 0) > 0) return;
+    p.mirkWarnT = MIRK.warnEvery;
+    p.say(text, 1.6);
+  }
+
   lightPower(p) {
     return p.lightPower ?? 1;
   }
@@ -259,7 +279,7 @@ export class MirkwoodFoes {
       if (!testing && this.seenAt(hang)) continue;
       const s = this.addSpider(hang, true, ceil || new THREE.Vector3(n.x, hang.y + 3, n.z));
       s.nest = n;
-      this.spawnT = 2 + Math.random() * 3;
+      this.spawnT = SPIDER.respawnLurk[0] + Math.random() * SPIDER.respawnLurk[1];
       return;
     }
     const pts = this.sites.spiderPatrol.filter((q) => {
@@ -269,7 +289,7 @@ export class MirkwoodFoes {
     if (!pts.length) return;
     const q = pts[Math.floor(Math.random() * pts.length)];
     this.addSpider(new THREE.Vector3(q.x, q.y, q.z));
-    this.spawnT = 4 + Math.random() * 5;
+    this.spawnT = SPIDER.respawnCrawl[0] + Math.random() * SPIDER.respawnCrawl[1];
   }
 
   /** Keeps up to ELF.maxActive guards walking the halls around the players inside them. */
@@ -288,7 +308,7 @@ export class MirkwoodFoes {
     if (!pts.length) return;
     const q = pts[Math.floor(Math.random() * pts.length)];
     this.addElf(q.x, q.y, q.z);
-    this.elfSpawnT = 5 + Math.random() * 6;
+    this.elfSpawnT = ELF.respawn[0] + Math.random() * ELF.respawn[1];
   }
 
   /* ---------------- the spiders' silk: wrap, cocoon, release ---------------- */
@@ -308,8 +328,8 @@ export class MirkwoodFoes {
     const s = p.wrap.spider;
     if (s) s.wrapping = null;
     p.wrap = null;
-    p.mirkGrace = MIRK.grace;
-    if (freed) p.say('Kiszabadultál a pók szorításából!', 2);
+    this.startGrace(p);
+    if (freed) p.say('Kiszabadultál a pók szorításából! Egy időre békén hagynak.', 3);
   }
 
   /** The wrap is complete: the cocoon closes, hoisted up on a line; one find is lost. */
@@ -342,10 +362,10 @@ export class MirkwoodFoes {
     p.cocoon = null;
     this.webs.hideCocoon(p);
     p.vel.set(0, -1, 0);
-    p.mirkGrace = MIRK.grace;
+    this.startGrace(p);
     p.kick = 0.8;
     this.sound('tear', p.pos);
-    p.say(by ? `${by.ch.name} kiszabadított a gubóból!` : 'Széttépted a gubót!', 2.5);
+    p.say(by ? `${by.ch.name} kiszabadított a gubóból! Egy időre békén hagynak.` : 'Széttépted a gubót! Egy időre békén hagynak.', 3);
   }
 
   /* ---------------- the Elvenking's guards: capture, cells, doors, keys ---------------- */
@@ -362,7 +382,7 @@ export class MirkwoodFoes {
       // No dungeon here (should not happen in layer 6): just a shove.
       tmp.set(p.pos.x - elf.pos.x, 0, p.pos.z - elf.pos.z).normalize();
       p.knock?.(tmp.x, tmp.z, 6);
-      p.mirkGrace = MIRK.grace;
+      this.startGrace(p);
       return;
     }
     p.captured = { t: 0, by: elf, moved: false };
@@ -477,7 +497,7 @@ export class MirkwoodFoes {
       if (p.jailed !== i) continue;
       p.jailed = null;
       this.game.journal?.mark?.('cella'); // journal (NOTES-9-journal): the cell escape
-      p.mirkGrace = MIRK.grace + 2;
+      this.startGrace(p);
       const msg = {
         pick: 'Kifeszítetted a zárat! Az ajtó nyitva. A leleteidet a pincében, hordóban menekülve szerezheted vissza.',
         partner: `${by?.ch.name || 'A társad'} kinyitotta a cellád ajtaját!`,
@@ -485,7 +505,7 @@ export class MirkwoodFoes {
         ring: 'Láthatatlanul kisurransz, amikor az őr benéz az üresnek hitt cellába.',
         wait: 'Egy tünde-őr nyitva hagyta az ajtót… Szökj!',
       }[how];
-      p.say(msg, 4);
+      p.say(`${msg} Az őrök egy időre békén hagynak.`, 5); // NOTES-51: the grace, said once
     }
   }
 
@@ -532,7 +552,7 @@ export class MirkwoodFoes {
       if (this.barrels.start(p)) return;
     }
     this.ensureDoors();
-    // The keys: only an invisible Bilbo can take them from the sleeping guard.
+    // The keys: only an invisible player (the Ring, any wearer: NOTES-50-shared-items) can take them from the sleeping guard.
     const ks = this.keySpot();
     if (ks && !this.keysTaken && Math.hypot(p.pos.x - ks.x, p.pos.z - ks.z) < 1.4 && Math.abs(p.pos.y - ks.y) < 2) {
       if (this.game.gollum?.isInvisible(p)) {
@@ -633,6 +653,7 @@ export class MirkwoodFoes {
     if (this.sites.cells.length) this.ensureDoors();
     for (const p of game.players) {
       p.mirkGrace = Math.max(0, (p.mirkGrace || 0) - dt);
+      p.mirkWarnT = Math.max(0, (p.mirkWarnT || 0) - dt);
       p.tauntCd = Math.max(0, (p.tauntCd || 0) - dt);
       p.taunting = Math.max(0, (p.taunting || 0) - dt);
       // Web sheets slow the walk (player.js reads p.slow).

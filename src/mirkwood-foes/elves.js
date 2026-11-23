@@ -9,14 +9,19 @@ import { raycast, sdf } from '../world.js';
 import { ElfBody } from './elf-body.js';
 
 export const ELF = {
-  maxActive: 3,
+  maxActive: 2, // NOTES-51-fewer-captures: was 3
+  respawn: [8, 8], // seconds until the next guard after one: min + random span (NOTES-51: was 5 + 0–6)
   radius: 0.3,
   spheres: [0.35, 1.0, 1.55],
   gravity: 18,
-  speed: { patrol: 1.25, chase: 3.25 }, // the player walks 3.6: a guard alone rarely catches a running player
+  speed: { patrol: 1.25, chase: 2.8 }, // the player walks 3.6: a guard alone rarely catches a running player (NOTES-51: chase was 3.25)
   sight: 13,
   sightNear: 4, // even without a lamp, this close
   catchReach: 1.0,
+  // NOTES-51: the warning before a capture. Within cueReach it reaches out and calls (the player gets a line); it may
+  // seize him only `cue` seconds later and only if he is still within catchReach.
+  cue: 0.7,
+  cueReach: 1.9,
   stagger: 2.2, // seconds a hit stops a guard
   despawn: 48,
 };
@@ -53,6 +58,7 @@ export class Elf {
     this.lastPos = this.pos.clone();
     this.scale = 1;
     this.shootT = 1 + Math.random() * 1.5;
+    this.cueT = -1; // NOTES-51: the warning before a capture (< 0: none running)
     this.hitY1 = 1.8;
     this.game.scene.add(this.group);
     this.sync(0);
@@ -66,6 +72,7 @@ export class Elf {
   set(state, t = 0) {
     this.state = state;
     this.t = t;
+    this.cueT = -1; // NOTES-51: the warning before a capture (< 0: none running)
   }
 
   /** Line of sight to a player whose lamp burns (or who is very close); not the Ring's wearer (canTarget). */
@@ -145,10 +152,23 @@ export class Elf {
         want = p.pos;
         speed = ELF.speed.chase;
         pose.reach = Math.max(pose.reach, Math.max(0, 1 - (d - 1) / 1.5));
-        if (Math.hypot(p.pos.x - this.pos.x, p.pos.z - this.pos.z) < ELF.catchReach && Math.abs(p.pos.y - this.pos.y) < 1.5 && mgr.canCapture(p)) {
-          mgr.capture(this, p);
-          this.target = null;
-          this.set('patrol', -6); // it takes the prisoner away: a long pause before it patrols again
+        // NOTES-51-fewer-captures: a call first, the capture only after ELF.cue seconds and only if still in reach.
+        const hd = Math.hypot(p.pos.x - this.pos.x, p.pos.z - this.pos.z);
+        const level = Math.abs(p.pos.y - this.pos.y) < 1.5;
+        if (this.cueT < 0) {
+          if (hd < ELF.cueReach && level && mgr.canCapture(p)) {
+            this.cueT = 0;
+            mgr.warn(p, this.pos, 'elf', 'Tünde-őr: „Megállj!” — kinyújtja feléd a kezét!');
+          }
+        } else {
+          this.cueT += dt;
+          pose.reach = 1;
+          if (hd > ELF.cueReach * 1.6 || !level) this.cueT = -1;
+          else if (this.cueT >= ELF.cue && hd < ELF.catchReach && mgr.canCapture(p)) {
+            mgr.capture(this, p);
+            this.target = null;
+            this.set('patrol', -6); // it takes the prisoner away: a long pause before it patrols again
+          }
         }
         break;
       }

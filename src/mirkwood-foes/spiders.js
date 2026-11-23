@@ -10,20 +10,27 @@ import { raycast, sdf } from '../world.js';
 import { SpiderBody } from './spider-body.js';
 
 export const SPIDER = {
-  maxActive: 5,
+  maxActive: 3, // NOTES-51-fewer-captures: was 5 (the user: they caught him all the time)
+  // Seconds until the next spawn after one (min + random span); NOTES-51: about twice the old 2–5 s / 4–9 s.
+  respawnLurk: [4, 6],
+  respawnCrawl: [8, 8],
   radius: 0.45,
   bodyH: 0.55, // the collision sphere's height above the floor point
   gravity: 18,
   climb: 2.6,
-  speed: { patrol: 1.1, chase: 3.1, flee: 4.2, taunt: 2.6 },
-  sight: 11, // they see in the dark (a lamp is seen from further)
-  sightLamp: 15,
+  speed: { patrol: 1.1, chase: 2.6, flee: 4.2, taunt: 2.6 }, // NOTES-51: chase was 3.1 (the player walks 3.6)
+  sight: 8, // they see in the dark (a lamp is seen from further); NOTES-51: was 11
+  sightLamp: 11, // NOTES-51: was 15
   noise: 13,
   noiseBilbo: 7,
   scare: 4.2, // a strong light (lightPower ≥ 2): no closer than this
   drop: 5, // a lurking spider drops on a player within this horizontal distance below it
   wrapReach: 1.35,
-  wrapTime: 1.4, // seconds of wrapping before the cocoon closes
+  // NOTES-51: the warning before a wrap. Within cueReach × wrapReach it rears up and hisses (and the player gets a line);
+  // it may wrap only `cue` seconds later and only if he is still within wrapReach — time to step away.
+  cue: 0.7,
+  cueReach: 1.8,
+  wrapTime: 2.5, // seconds of wrapping before the cocoon closes (NOTES-51: was 1.4)
   despawn: 45,
   taunt: 26, // Bilbo's taunt reaches spiders within this distance
 };
@@ -71,6 +78,7 @@ export class Spider {
     this.tauntAt = null;
     this.tauntT = 0;
     this.hissT = 0;
+    this.cueT = -1; // NOTES-51: the warning before a wrap (< 0: none running)
     // The combat's hit capsule (enemies/index.js foeTouches): low and wide.
     this.hitY0 = 0.2 * this.scale;
     this.hitY1 = 0.9 * this.scale;
@@ -89,6 +97,7 @@ export class Spider {
   set(state, t = 0) {
     this.state = state;
     this.t = t;
+    this.cueT = -1;
   }
 
   centre(out) {
@@ -245,9 +254,25 @@ export class Spider {
         speed = SPIDER.speed.chase;
         pose.fangs = Math.max(pose.fangs, 0.5);
         if (d < 2.4) pose.strike = Math.max(pose.strike, 1 - (d - 1.2) / 1.2);
-        if (Math.hypot(p.pos.x - this.pos.x, p.pos.z - this.pos.z) < SPIDER.wrapReach * this.scale && Math.abs(p.pos.y - this.pos.y) < 1.4 && mgr.canWrap(p)) {
-          mgr.startWrap(this, p);
-          this.set('wrap');
+        // NOTES-51-fewer-captures: a warning cue first (rears up, hisses), the wrap only after SPIDER.cue seconds.
+        const hd = Math.hypot(p.pos.x - this.pos.x, p.pos.z - this.pos.z);
+        const reach = SPIDER.wrapReach * this.scale;
+        const level = Math.abs(p.pos.y - this.pos.y) < 1.4;
+        if (this.cueT < 0) {
+          if (hd < reach * SPIDER.cueReach && level && mgr.canWrap(p)) {
+            this.cueT = 0;
+            this.hissT = 3;
+            mgr.warn(p, this.pos, 'hiss', 'Egy pók rád veti magát — ugorj félre!');
+          }
+        } else {
+          this.cueT += dt;
+          pose.strike = 1;
+          pose.fangs = 1;
+          if (hd > reach * SPIDER.cueReach * 1.6 || !level) this.cueT = -1; // he got away: the next try warns again
+          else if (this.cueT >= SPIDER.cue && hd < reach && mgr.canWrap(p)) {
+            mgr.startWrap(this, p);
+            this.set('wrap'); // (resets cueT)
+          }
         }
         if (this.hissT <= 0 && Math.random() < dt * 0.4) {
           this.hissT = 3;

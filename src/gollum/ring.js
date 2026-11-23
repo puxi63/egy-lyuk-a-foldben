@@ -1,8 +1,11 @@
 /* ==== gollum/ring.js — the Ring (TERV 0.2 layer 5's famous find, 0.4, 0.5, 0.12): it lies on the tunnel floor in the
    dark (the lake provider's ringSpot; book ch. 5: Bilbo's hand met it on the tunnel floor). A keep-find (finds.js
-   `gyuru`, keep: true): never sold, once per game. Anyone may pick it up; only Bilbo can wear it — another character
-   puts it in the shared collection and a Bilbo player can wear it from then on.
-   Worn (Bilbo's ability slot: X / Á / d-pad left; input.js `ringPressed`):
+   `gyuru`, keep: true): never sold, once per game. Anyone may pick it up, and from then on EVERY player can wear it,
+   both at once (NOTES-50-shared-items, the user 2026-11-23: one pickup is enough); each puts it on / takes it off
+   independently. The key (ringKeys): the ability key (X / Á / d-pad left; input.js `ringPressed`) for a character
+   without an own ability; the crouch key held with it (C + X / . + Á / LB + d-pad left) for everyone, which is the
+   only way for Kíli and Bombur, whose ability key keeps the bow / the charge.
+   Worn:
    - goblins (and later spiders and elves) cannot see the wearer: isInvisible(p);
    - in the partner's view the body vanishes, only a faint shimmer of its outline shows (the body's material swapped
      for an additive rim-light shader, one draw call as before; the tool, bag and sword hidden);
@@ -10,7 +13,10 @@
      chunk: the sign of toneMappingExposure, a uniform every lit material already has: no extra pass, no new
      program), the view stretches (a wider field of view), a CSS vignette with streaks at the edges, the hand and tool
      turn translucent, sounds are muffled (a low-pass on the shared audio context's output) and a wind roars.
-   - Smaug's sense of smell is a stored counter for later (`smell`, seconds worn). ==== */
+   - Smaug's sense of smell is a stored counter (`smell`): seconds the Ring was worn by anyone. Two wearers at once
+     count once (wall-clock time, not the sum), the same for `wornT` (Gollum's boldness): NOTES-50-shared-items.
+   Two wearers in split screen: each view greys only by its own exposure sign (no extra pass), the shimmer material
+   is shared (one program, its fade uniform takes the larger of the wearers' fades), the muffle is one filter. ==== */
 import * as THREE from 'three';
 import { sharedAudio } from '../audio.js';
 import { chunkKey } from '../enemies/sites.js';
@@ -25,6 +31,17 @@ export const RING = {
   muffleCoop: 2400,
   wind: 0.09,
 };
+
+/** NOTES-50-shared-items: the characters whose ability key has its own use (enemies/combat.js ability()). */
+export const OWN_ABILITY = new Set(['kili', 'bombur']);
+
+/** The Ring's key names for player p's binding (b = game.bindings entry): the ability key, or crouch + ability key. */
+export function ringKeys(p, b) {
+  const pad = b?.pad != null && !b.kbm;
+  const key = b?.kbm === 'keys2' ? 'Á' : pad ? 'd-pad ←' : 'X';
+  const chord = b?.kbm === 'keys2' ? '. + Á' : pad ? 'LB + d-pad ←' : 'C + X';
+  return { key: OWN_ABILITY.has(p?.ch?.id) ? chord : key, chord };
+}
 
 /* ---- the shadow-world grade, folded into three's tone-mapping chunk ------------------------------------------------
    A negative toneMappingExposure marks "this view wears the Ring": the tone-mapping functions use its absolute value,
@@ -188,10 +205,9 @@ export class Ring {
     return !!p?.ringOn && p.dead <= 0;
   }
 
-  /** The ability slot (Bilbo): put the Ring on or take it off. */
+  /** The Ring's key (any character, once found: NOTES-50-shared-items): put the Ring on or take it off. */
   toggle(p) {
-    if (p.ch.id !== 'bilbo') return false;
-    if (!this.found) return false;
+    if (!this.found || !p?.ch) return false;
     if (p.dead > 0 || p.riding || p.choosing) return true;
     p.ringOn = !p.ringOn;
     p.say(p.ringOn ? 'Felhúztad a Gyűrűt: láthatatlan vagy. Minden szürke és távoli…' : 'Lehúztad a Gyűrűt.', 2.5);
@@ -267,36 +283,37 @@ export class Ring {
       }
     }
     // Worn time, Smaug's smell, the per-player look.
+    // NOTES-50-shared-items: any number of wearers; the time counts once while anybody wears it (not per wearer).
     let anyOn = false;
+    let shimmer = 0;
     game.players.forEach((p, i) => {
-      if (p.ringOn && (p.ch.id !== 'bilbo' || p.dead > 0 || p.choosing)) p.ringOn = false;
-      if (p.ringOn) {
-        anyOn = true;
-        this.wornT += dt;
-        this.smell += dt;
-      }
-      this.look(p, i, dt);
+      if (p.ringOn && (p.dead > 0 || p.choosing)) p.ringOn = false;
+      if (p.ringOn) anyOn = true;
+      shimmer = Math.max(shimmer, this.look(p, i, dt));
     });
+    if (anyOn) {
+      this.wornT += dt;
+      this.smell += dt;
+    }
+    // The shared shimmer material fades with the most visible wearer (both wearers draw it: one program).
+    uShimmer.value = shimmer;
     this.updateAudio(dt, anyOn);
   }
 
+  /** Found: every player can wear it from now on (NOTES-50-shared-items), each told his own key. */
   pickedUp(p) {
     this.found = true;
     this.by = p.ch.id;
-    const bilboHere = this.game.players.some((q) => q.ch.id === 'bilbo' && !q.choosing);
-    if (p.ch.id === 'bilbo') {
-      p.say('Valami hideg fémes dolog a földön… egy gyűrű! Zsebre teszed.', 6);
-    } else {
-      p.say('Egy aranygyűrű a földön! Ezt csak Bilbó viselheti: a közös gyűjteménybe teszed.', 6);
-      for (const q of this.game.players) if (q !== p && q.ch.id === 'bilbo' && !q.choosing) q.say(`${p.ch.name} gyűrűt talált: a tiéd, felhúzhatod.`, 5);
-      if (!bilboHere) p.say('Bilbóként felhúzhatod majd.', 4);
-    }
+    const keyOf = (q) => ringKeys(q, this.game.bindings[this.game.players.indexOf(q)]).key;
+    p.say(`Valami hideg fémes dolog a földön… egy gyűrű! Zsebre teszed. Felhúzni: ${keyOf(p)}.`, 6);
+    for (const q of this.game.players) if (q !== p && !q.choosing) q.say(`${p.ch.name} gyűrűt talált: te is felhúzhatod (${keyOf(q)}).`, 5);
     this.owner.sound('ringOn', null);
-    this.owner.hint(p, 'gyuru');
+    this.owner.hintAll('gyuru');
     this.game.saveNow?.();
   }
 
-  /** The per-player look: the view's stretch, the vignette, the ghost hand, the shimmer for the others, the slot. */
+  /** The per-player look: the view's stretch, the vignette, the ghost hand, the shimmer for the others, the slot.
+   *  Returns the eased fade (0…1) of this player's Ring. */
   look(p, i, dt) {
     let v = this.views.get(p);
     const el = this.game.huds[i]?.el;
@@ -343,19 +360,17 @@ export class Ring {
     const hilt = this.game.enemies?.sting?.views?.get(p)?.holder;
     if (hilt) this.swap(hilt, on, ghostMaterial(), v);
     this.shimmer(p, on, v);
-    if (on) uShimmer.value = k;
-    // The quick slot: the Ring and its key, once found (Bilbo wears it; the others see who can).
+    // The quick slot: the Ring and this player's key, once found (every character: NOTES-50-shared-items).
     if (v.slot) {
-      const b = this.game.bindings[i];
-      const key = b?.kbm === 'keys2' ? 'Á' : b?.pad != null && !b.kbm ? 'd-pad ←' : 'X';
-      const text = !this.found ? '' : p.ch.id === 'bilbo' ? `${on ? 'Lehúzás' : 'Gyűrű'} — ${key}` : 'Gyűrű: csak Bilbó viselheti';
+      const key = ringKeys(p, this.game.bindings[i]).key;
+      const text = !this.found || p.choosing ? '' : `${on ? 'Lehúzás' : 'Gyűrű'} — ${key}`;
       if (text !== v.slotText) {
         v.slotText = text;
         v.slot.innerHTML = text ? `<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><ellipse cx="12" cy="12" rx="8.5" ry="6.5" fill="none" stroke="#e8c050" stroke-width="2.6"/><ellipse cx="12" cy="11.2" rx="8.5" ry="6.5" fill="none" stroke="#fff0b0" stroke-width="0.8" opacity="0.7"/></svg><span>${text}</span>` : '';
         v.slot.style.display = text ? 'flex' : 'none';
-        v.slot.style.opacity = p.ch.id === 'bilbo' ? '1' : '0.7';
       }
     }
+    return on ? Math.max(k, 0.001) : k;
   }
 
   /** Swaps every mesh under `root` to `mat` while `on` (remembering the originals); restores them when off. */

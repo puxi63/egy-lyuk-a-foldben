@@ -52,7 +52,17 @@ export const NOISE = {
   calm: 0.24,
 };
 /** The waking scare's timing (s): rearing up, the fire's start and end, then settling down. */
-export const WAKE = { rear: 1.1, fire: 1.5, settle: 7 };
+export const WAKE = {
+  rear: 1.1,
+  fire: 1.5,
+  settle: 7,
+  // NOTES-51-fewer-captures: after a burst the noise was only 0.05 under the waking mark and he could wake again 2.5 s
+  // later — running from the fire (or the knock-back's landing) brought a second burst at once. Now, for `again`
+  // seconds after a burst, noise cannot wake him (it may still stir him: the warning), and a player the fire caught is
+  // not caught again for `spare` seconds (also by a burst the conversation brings).
+  again: 60,
+  spare: 60,
+};
 /** The dragon-sickness: the value of Smaug's gold in the bag that brings it on; the walking speed factor. */
 export const SICK = { value: 1500, slow: 0.6, partnerR: 2.2 };
 const ARK_REACH = 1.45;
@@ -76,6 +86,7 @@ export class Hoard {
     this.target = null;
     this.fireHits = null;
     this.burnt = new Set();
+    this.fireCalm = 0; // NOTES-51: seconds left in which noise cannot wake him again (WAKE.again)
     this.arkTaken = false;
     this.arkBy = null;
     this.huds = new Map();
@@ -346,6 +357,11 @@ export class Hoard {
     return NOISE.wake;
   }
 
+  /** NOTES-51: seconds after a burst in which noise cannot wake him (the handbook reads it; no import cycle). */
+  get fireAgain() {
+    return WAKE.again;
+  }
+
   inLayer(p) {
     return inHoardLayer(p.pos);
   }
@@ -354,7 +370,7 @@ export class Hoard {
     return inHoard(p.pos);
   }
 
-  /** Starts the conversation if Bilbo wears the Ring in the hall (and he has not talked lately). */
+  /** Starts the conversation if somebody (any character: NOTES-50-shared-items) wears the Ring in the hall (and he has not talked lately). */
   startTalk() {
     if (this.talk || this.talkCd > 0) return false;
     const sp = this.game.players.find((p) => canSpeak(this.game, p, inHoard));
@@ -415,20 +431,22 @@ export class Hoard {
   updateSmaug(dt) {
     const s = this.smaug;
     this.t += dt;
-    // NOTES-16-smaug-talk: stirred with Bilbo invisible in the hall, he talks instead (and while talking, nothing else).
+    // NOTES-16-smaug-talk: stirred with a Ring wearer invisible in the hall, he talks instead (and while talking, nothing else).
     if ((this.mode === 'sleep' || this.mode === 'stir') && this.noise >= NOISE.stir && this.startTalk()) return;
     if (this.mode === 'talk') {
       if (this.talk) this.talk.update(dt);
       return;
     }
+    // NOTES-51: no waking by noise for WAKE.again seconds after a burst.
+    const wakes = this.noise >= NOISE.wake && this.fireCalm <= 0;
     if (this.mode === 'sleep') {
-      if (this.noise >= NOISE.wake) this.wake();
+      if (wakes) this.wake();
       else if (this.noise >= NOISE.stir) {
         this.setState('stir');
         for (const p of this.game.players) if (!p.choosing && inHoardLayer(p.pos)) p.say('A horkolás elakadt… Szmaug mocorog. Csendben!', 3);
       }
     } else if (this.mode === 'stir') {
-      if (this.noise >= NOISE.wake) this.wake();
+      if (wakes) this.wake();
       else if (this.noise < NOISE.calm) {
         this.calmT += dt;
         if (this.calmT > 3) this.setState('sleep');
@@ -446,7 +464,7 @@ export class Hoard {
       }
       if (this.fireHits) {
         for (const p of this.game.players) {
-          if (this.burnt.has(p) || p.dead > 0 || p.choosing) continue;
+          if (this.burnt.has(p) || p.dead > 0 || p.choosing || (p.smaugSpare || 0) > 0) continue; // NOTES-51: spared a while after a burn
           if (this.fireHits.hits(tmpV.copy(p.pos).add(tmpH.set(0, 0.7, 0)))) {
             this.burnt.add(p);
             this.burn(p);
@@ -457,13 +475,14 @@ export class Hoard {
         s?.breath(false);
         this.fireHits = null;
         this.noise = Math.min(this.noise, NOISE.wake - 0.05);
+        this.fireCalm = WAKE.again; // NOTES-51
         this.setState('settle');
       }
     } else if (this.mode === 'settle') {
       if (this.t > WAKE.settle && this.noise < NOISE.calm) {
         this.setState('sleep');
         for (const p of this.game.players) if (!p.choosing && inHoardLayer(p.pos)) p.say('Szmaug lassan visszaalszik…', 3);
-      } else if (this.t > 2.5 && this.noise >= NOISE.wake) this.wake();
+      } else if (this.t > 2.5 && wakes) this.wake();
     }
   }
 
@@ -479,6 +498,7 @@ export class Hoard {
     p.knock(dx, dz, 7.5);
     p.kick = 1;
     p.hoardFire = 1;
+    p.smaugSpare = WAKE.spare; // NOTES-51: not caught by the fire again for a while
     const life = lifeOf(p); // NOTES-27-loose: Kihívás armour tier 3 "több életerő" (modes/rules.js)
     const can = p.bag.map((f, i) => [f, i]).filter(([f]) => !f.keep && !f.famous);
     if (can.length) {
@@ -525,6 +545,8 @@ export class Hoard {
     const s = this.smaug;
     // NOTES-16-smaug-talk: the timers; the finale (busy) or a slain Smaug ends a conversation at once.
     if (this.talkCd > 0) this.talkCd -= dt;
+    if (this.fireCalm > 0) this.fireCalm -= dt; // NOTES-51
+    for (const p of game.players) if (p.smaugSpare > 0) p.smaugSpare -= dt;
     if (this.lull > 0) this.lull -= dt;
     if (this.talk && !this.listening) {
       const tk = this.talk;

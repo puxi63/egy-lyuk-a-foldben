@@ -25,7 +25,7 @@ const BLAST_HEAR = 30;
  * `warn` seconds of drums before the goblins come out; `goblins` per wave (+`perExtraPlayer` in co-op), never more than
  * GOBLIN.maxActive goblins about at once.
  */
-export const RAID = { minDepth: LAYER_TOPS[1], warn: 6, goblins: 3, perExtraPlayer: 1 };
+export const RAID = { minDepth: LAYER_TOPS[1], warn: 6, goblins: 2, perExtraPlayer: 1 }; // NOTES-51-fewer-captures: goblins was 3
 
 /** Key names per control scheme, in the style of tutorial.js (the hint names the exact keys of that player). */
 const KEYS = {
@@ -96,6 +96,32 @@ export class Enemies {
 
   canGrab(p) {
     return this.canTarget(p) && !p.held && (p.graceT || 0) <= 0;
+  }
+
+  /** NOTES-51-fewer-captures: a player the goblins may notice, chase and grab (not during his grace after a grab). */
+  canChase(p) {
+    return this.canTarget(p) && (p.goblinGrace || 0) <= 0;
+  }
+
+  /** NOTES-51: how many goblins are after player p right now (alert, chase, grab). */
+  chasers(p) {
+    let n = 0;
+    for (const g of this.list) if (g.target === p && (g.state === 'alert' || g.state === 'chase' || g.state === 'grab')) n++;
+    return n;
+  }
+
+  /** NOTES-51: no goblin goes after p for GOBLIN.grace seconds; those after him now give up. `say`: one line. */
+  startGrace(p, say = true) {
+    p.goblinGrace = GOBLIN.grace;
+    if (say) p.say('A goblinok egy időre békén hagynak.', 2.5);
+  }
+
+  /** NOTES-51: the warning cue before a grab: the sound at the goblin, and one HUD line at most every 3 s per player. */
+  warn(p, at, sound, text) {
+    this.sound(sound, at);
+    if ((p.goblinWarnT || 0) > 0) return;
+    p.goblinWarnT = 3;
+    p.say(text, 1.6);
   }
 
   /** Light strength of a player: 1 the hobbit lamp; 2+ a strong light (the dwarf miner's lamp, Gandalf's staff) scares
@@ -221,10 +247,11 @@ export class Enemies {
       if (it.digPressed) {
         p.struggle = (p.struggle || 0) + 1;
         p.kick = 0.6;
-        if (p.struggle >= GOBLIN.struggle) {
+        // NOTES-51-fewer-captures: a goblin is shaken off with GOBLIN.struggle presses; a troll's grip still takes 5.
+        if (p.struggle >= (p.held.isTroll ? 5 : GOBLIN.struggle)) {
           const g = p.held;
           g.hit(p.pos.x, p.pos.z, 0.8, 'struggle');
-          if (!g.isTroll) p.say('Lerázod a goblint!', 2); // trolls (NOTES-24-trolls): a troll says its own line
+          if (!g.isTroll) p.say('Lerázod a goblint! Egy időre békén hagynak.', 3); // trolls (NOTES-24-trolls): a troll says its own line
           p.graceT = 1.5;
         }
       }
@@ -314,6 +341,8 @@ export class Enemies {
       this.noiseT[i] = Math.max(0, this.noiseT[i] - dt);
       if (game.intents[i]?.dig && !p.held) this.noiseT[i] = 1.5;
       p.graceT = Math.max(0, (p.graceT || 0) - dt);
+      p.goblinGrace = Math.max(0, (p.goblinGrace || 0) - dt); // NOTES-51
+      p.goblinWarnT = Math.max(0, (p.goblinWarnT || 0) - dt);
     });
     this.spawn(dt);
     this.raid(dt);
@@ -359,7 +388,7 @@ export class Enemies {
     if (!pts.length) return;
     const q = pts[Math.floor(Math.random() * pts.length)];
     this.add(q.x, q.y, q.z);
-    this.spawnT = 3 + Math.random() * 4;
+    this.spawnT = GOBLIN.respawn[0] + Math.random() * GOBLIN.respawn[1];
   }
 
   /** Adds a goblin at a floor point. */

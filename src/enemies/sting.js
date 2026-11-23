@@ -1,5 +1,6 @@
 /* ==== enemies/sting.js — Fullánk (Sting, TERV 0.2 / 0.4 Érzékelés / 0.12): found in the trolls' cave among their
-   plunder, as in the book; a special find that is kept, never sold. Once owned the hilt shows in the corner of the
+   plunder, as in the book; a special find that is kept, never sold. Shared (NOTES-50-shared-items): when one player
+   picks it up both have it (shared-items.js gives it to the other one and to a player who joins later). Once owned the hilt shows in the corner of the
    view and glows blue, with a blue screen edge, when goblins are near; the lamp's light turns blue on the walls; the
    other player sees it at the owner's hip. It is the stronger weapon (combat.js). Also Kíli's bow in the view. ==== */
 import * as THREE from 'three';
@@ -8,6 +9,7 @@ import { BONE } from '../characters.js';
 import { CAVE } from '../underground/pieces.js';
 import { TROLL_FLOOR } from '../underground/sites.js';
 import { raycast } from '../world.js';
+import { stingShared } from '../shared-items.js';
 import { chunkKey } from './sites.js';
 
 /** Where Sting lies: in front of the trolls' rusty chest, among the plunder (pieces.js CAVE.chest, yaw −1.2). */
@@ -132,7 +134,7 @@ export class Sting {
 
   /** Somebody owns it (a slot of the save): the cave's copy is gone. */
   get owned() {
-    return this.game.players.some((p) => p.sting) || (this.game.save?.slots || []).some((s) => s && s.sting);
+    return stingShared(this.game);
   }
 
   /** Per view (terrain.cullFor's mask): the cave's copy shows only where its chunk can be seen. */
@@ -213,9 +215,11 @@ export class Sting {
       if (k >= 1) {
         this.flying = null;
         this.ground.visible = false;
-        f.p.sting = true;
+        // NOTES-50-shared-items: both players have it from now on.
+        for (const q of game.players) if (!q.choosing && q.ch) q.sting = true;
         f.p.say('Megtaláltad Fullánkot! Kéken izzik, ha goblinok vannak a közelben, és erősebb a csákánynál.', 6);
-        f.p.say('Fullánkot nem adod el: a tiéd marad.', 4);
+        f.p.say('Fullánkot nem adjátok el: mindkettőtöké marad.', 4);
+        for (const q of game.players) if (q !== f.p && !q.choosing) q.say(`${f.p.ch.name} megtalálta Fullánkot: a te kezedben is ott van.`, 5);
         this.mgr.sound('sting', f.p.pos);
         game.saveNow?.();
       }

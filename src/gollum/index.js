@@ -4,7 +4,7 @@
    whispering and watching, his pale eyes glinting; light keeps him away (a strong light, p.lightPower ≥ 2, far away).
    A player who stays on the riddle beach is challenged: he crawls to the riddle spot and the riddle game starts
    (gollum/riddles.js): win → gold, lose → he steals a find (or gold). The Ring (gollum/ring.js) lies on the tunnel
-   floor; the longer Bilbo wears it, the more Gollum follows him ("Tolvaj! Zsákos!") and the bolder he gets: close
+   floor; the longer it is worn (by anyone: NOTES-50-shared-items), the more Gollum follows its wearer ("Tolvaj! Zsákos!") and the bolder he gets: close
    behind, at last snatching a find. Normal mode never kills.
    Wiring (game.js): `new Gollum(game)`, `sites.use(LAKE_SITE_PROVIDER)`, `restore(save.gollum)`, `input(p, i, it)` per
    player before the menus (true while the riddle UI has the player), `update(dt)`, `cullFor(seen, i)` and
@@ -16,7 +16,7 @@ import { raycast } from '../world.js';
 import { chunkKey } from '../enemies/sites.js';
 import { boatMesh, glintMaterial, GollumBody } from './body.js';
 import { RIDDLE, RiddleGame } from './riddles.js';
-import { Ring, shimmerMaterial } from './ring.js';
+import { OWN_ABILITY, Ring, ringKeys, shimmerMaterial } from './ring.js';
 import { LakeSites, snapFloor } from './sites.js';
 
 /** Tuning (metres, seconds, metres per second). */
@@ -39,9 +39,9 @@ export const GOLLUM = {
 
 /** Key names per control scheme (the hints name the exact keys of that player, like tutorial.js). */
 const KEYS = {
-  mouse: { nav: 'W / S', confirm: 'Szóköz', ring: 'X' },
-  keys2: { nav: '↑ / ↓', confirm: 'Enter', ring: 'Á' },
-  pad: { nav: 'a d-pad ↑ / ↓', confirm: 'A', ring: 'a d-pad ←' },
+  mouse: { nav: 'W / S', confirm: 'Szóköz' },
+  keys2: { nav: '↑ / ↓', confirm: 'Enter' },
+  pad: { nav: 'a d-pad ↑ / ↓', confirm: 'A' },
 };
 
 const tmp = new THREE.Vector3();
@@ -149,10 +149,18 @@ export class Gollum {
 
   /* ---------------- input ---------------- */
 
-  /** Per player when no other menu has it: the riddle UI (true: the player's input is taken), the Ring's key. */
+  /**
+   * Per player when no other menu has it: the riddle UI (true: the player's input is taken), the Ring's key.
+   * NOTES-50-shared-items: once found, every character wears it — the ability key alone for a character without an own
+   * ability, the crouch key held with the ability key for everyone (Kíli's bow and Bombur's charge keep the key alone).
+   * A press used for the Ring is taken from the intent, so enemies/combat.js ability() does not see it too.
+   */
   input(p, i, it) {
     if (this.riddle && this.riddle.input(p, it)) return true;
-    if (it.ringPressed && p.ch.id === 'bilbo' && this.ring.found) this.ring.toggle(p);
+    if (it.ringPressed && this.ring.found && p.ch && (it.climbDown || !OWN_ABILITY.has(p.ch.id))) {
+      this.ring.toggle(p);
+      it.abilityPressed = false;
+    }
     return false;
   }
 
@@ -161,8 +169,12 @@ export class Gollum {
   update(dt) {
     const game = this.game;
     this.ring.update(dt);
-    // Bench: `?ring=1` puts the Ring on the first player (Bilbo) for the shadow-world measurement.
-    if (game.bench && game.params?.get('ring') === '1' && game.players[0]?.ch.id === 'bilbo') {
+    // Bench: `?ring=1` puts the Ring on the first player (`?ring=2`: on both) for the shadow-world measurement.
+    const benchRing = game.bench ? game.params?.get('ring') : null;
+    if (benchRing === '2') {
+      this.ring.found = true;
+      for (const q of game.players) if (!q.choosing) q.ringOn = true;
+    } else if (benchRing === '1' && game.players[0]) {
       this.ring.found = true;
       game.players[0].ringOn = true;
     }
@@ -516,13 +528,15 @@ export class Gollum {
 
   /* ---------------- following the Ring ---------------- */
 
-  /** The Ring's bearer he follows: Bilbo, worn long enough, below Goblin-town's top, wearing it now (or a moment ago). */
+  /**
+   * The Ring's bearer he follows: worn long enough, below Goblin-town's top, wearing it now (or a moment ago). Any
+   * character (NOTES-50-shared-items); with two wearers he keeps to the one he already follows.
+   */
   followTarget() {
     if (!this.ring.found || this.ring.wornT < GOLLUM.followFrom) return null;
-    for (const p of this.game.players) {
-      if (p.ch.id !== 'bilbo' || !this.active(p) || p.depth < GOLLUM.followDepth) continue;
-      if (p.ringOn || (p.ringOffT || 0) < 20) return p;
-    }
+    const ok = (p) => p && this.game.players.includes(p) && this.active(p) && p.depth >= GOLLUM.followDepth && (p.ringOn || (p.ringOffT || 0) < 20);
+    if (ok(this.followP)) return this.followP;
+    for (const p of this.game.players) if (ok(p)) return p;
     return null;
   }
 
@@ -631,9 +645,19 @@ export class Gollum {
     const k = b?.pad != null && !b.kbm ? KEYS.pad : KEYS[b?.kbm] || KEYS.pad;
     let text = '';
     if (id === 'gollum') text = `<b style="color:var(--gold,#e8c070)">Gollam!</b> A sötétből les rád. A lámpád fénye távol tartja. Ha a parton, a találós kérdések helyén maradsz, odajön, és találós kérdéseket ad fel: ${k.nav} választás, ${k.confirm} válasz. Ha nyersz, ajándékot ad; ha vesztesz, ellop egy leletet.`;
-    else if (p.ch.id === 'bilbo') text = `<b style="color:var(--gold,#e8c070)">A Gyűrű.</b> Felhúzva (${k.ring}) láthatatlan vagy: a goblinok nem látnak. De minél tovább viseled, Gollam annál inkább a nyomodba szegődik…`;
-    else text = '<b style="color:var(--gold,#e8c070)">A Gyűrű.</b> Csak Bilbó viselheti: a közös gyűjteménybe került. Bilbóként felhúzva láthatatlanná tesz.';
+    else text = `<b style="color:var(--gold,#e8c070)">A Gyűrű.</b> Bárki felhúzhatja, egyszerre mindketten is: ${ringKeys(p, b).key}. Felhúzva láthatatlan vagy: a goblinok, a pókok és a tündék nem látnak. De minél tovább viseli valaki, Gollam annál inkább a nyomába szegődik…`;
     this.hintUi.set(p, { t: 12, text, i });
+  }
+
+  /** The same once-per-game hint for every player in the game (the Ring found: all of them may wear it). */
+  hintAll(what) {
+    const tut = this.game.tutorial;
+    if (!tut?.done || tut.done.has(what)) return;
+    for (const q of this.game.players) {
+      if (q.choosing) continue;
+      tut.done.delete(what);
+      this.hint(q, what);
+    }
   }
 
   updateHints(dt) {

@@ -123,13 +123,14 @@ export class Combat {
     this.mgr.hinted(p, 'throw');
   }
 
-  /** The character's own ability: Kíli's bow, Bombur's charge (Bilbo's Ring comes later; the others have none). */
+  /** The character's own ability: Kíli's bow, Bombur's charge (the others: the Ring once found; else none). */
   ability(p) {
     if ((p.abilityCd || 0) > 0) return;
     if (p.ch.id === 'kili') return this.shootArrow(p);
     if (p.ch.id === 'bombur') return this.charge(p);
-    // Bilbo's slot is the Ring once it is found (gollum/ index.js input handles `ringPressed`, the same key).
-    if (p.ch.id === 'bilbo' && this.game.gollum?.ringFound()) return;
+    // NOTES-50-shared-items: every other character's slot is the Ring once it is found (gollum/index.js input takes the
+    // press first and clears it; this stays quiet in any case).
+    if (this.game.gollum?.ringFound()) return;
     if (p.ch.id === 'bilbo') p.say('A Gyűrűt még nem találtad meg… Dobj követ: abban jó vagy.', 3);
     else if (p.ch.id === 'thorin') p.say('Thorin ereje az ütésében van: csákánnyal erősebben üt.', 3);
     else p.say('Nincs külön képességed: üss a csákánnyal, vagy dobj követ.', 3);
