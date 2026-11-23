@@ -38,6 +38,8 @@ export const CHARACTERS = [
   { id: 'kili', name: 'Kíli', coat: 0x2e2a2a, vest: 0x4a3a2c, hair: 0x2a1a10, beard: 0x2a1a10, color: '#9a80e0', height: 1.45, eye: 1.31,
     plus: 'Felderítő: gyorsan mászik', minus: 'Kisebb zsák', perk: { climb: 1.35, bag: 0.8 } },
 ];
+/** NOTES-49-ladder-jump: jumping off a ladder: horizontal push (m/s), the jump speed's share upwards, no regrab (s). */
+const LADDER_JUMP = { push: 2.6, up: 0.55, regrab: 0.6 };
 const NO_PERK = { find: 1, power: 1, rock: 1, sell: 1, price: 1, hunger: 1, bag: 1, climb: 1 };
 
 const tmpN = new THREE.Vector3();
@@ -413,6 +415,19 @@ export class Player {
     // of what they lead to, so near() never reached them from there and stepping onto them dropped the player).
     if (!ladder && this.climbing && this.ladderRef && lads.holds(this.ladderRef, this.pos.x, this.pos.y, this.pos.z)) ladder = this.ladderRef;
     if (!ladder && !this.climbing && this.grounded && it.climbDown && !this.carrying && !menuOpen) ladder = lads.nearTop(this.pos.x, this.pos.y, this.pos.z);
+    // NOTES-49-ladder-jump: jumping off a ladder mid-climb (the jump key pressed with back or a side held): a push away
+    // in the held direction, and no grabbing any ladder again for LADDER_JUMP.regrab s (the held jump key and the
+    // falling catch below would take it right back).
+    this.ladderOffT = Math.max(0, (this.ladderOffT || 0) - dt);
+    if (this.climbing && ladder && it.jumpPressed && !menuOpen && (mz < -0.3 || Math.abs(mx) > 0.5)) {
+      const hl = Math.hypot(wx, wz) || 1;
+      this.vel.set((wx / hl) * LADDER_JUMP.push, PLAYER.jump * LADDER_JUMP.up, (wz / hl) * LADDER_JUMP.push);
+      this.climbing = false;
+      this.ladderRef = null;
+      this.ladderOffT = LADDER_JUMP.regrab;
+      this.addHunger(-HUNGER.perJump);
+    }
+    if (this.ladderOffT > 0) ladder = null;
     // NOTES-48-ladder-down: falling past a ladder catches it.
     const catching = !!ladder && !this.grounded && this.vel.y < -2.5;
     // (coop-actions, NOTES-23-coop-actions: no ladders while carrying the heavy chest.)

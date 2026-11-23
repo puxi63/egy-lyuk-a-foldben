@@ -60,6 +60,7 @@ import { layerAtDepth } from './materials.js';
 import { Music } from './audio.js';
 import { applyTerrain, changedNear, clearSave, dugVolume, encodeTerrain, rememberBase, snapshot, useSaveSlot, writeSave } from './save.js';
 import { START_KEY } from './modes/rules.js';
+import { syncSharedItems } from './shared-items.js';
 import { chunkVersion, digSphere, generate } from './world.js';
 
 
@@ -566,6 +567,7 @@ export class Game {
     this.dayClock.update(dt); // daynight (NOTES-10-daynight): events, wake fades, the surface's look
     this.exits.update(dt);
     this.enemies.update(dt);
+    syncSharedItems(this); // NOTES-50-shared-items: Sting and the mithril shirt for both players
     this.gollum.update(dt);
     this.mirkFoes.update(dt);
     this.laketownEvents.update(dt);

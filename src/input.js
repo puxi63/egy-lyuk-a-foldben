@@ -17,8 +17,9 @@ export function emptyIntent() {
     startPressed: false, leaveHeld: false, exitPressed: false,
     // Combat (enemies/combat.js): throw a stone, the character's ability (Kíli's bow, Bombur's charge).
     throwPressed: false, abilityPressed: false,
-    // The Ring (gollum/ring.js): Bilbo's ability slot puts it on / takes it off (TERV 0.4: "Gyűrű (Bilbó) vagy a karakter
-    // saját képessége" share one D-pad slot), so it is the same key as the ability.
+    // The Ring (gollum/ring.js): the ability key (TERV 0.4: "Gyűrű (Bilbó) vagy a karakter saját képessége" share one
+    // D-pad slot). NOTES-50-shared-items: once found it is every character's — gollum/index.js reads this key alone for
+    // a character without an own ability, and with `climbDown` held (C + X, . + Á, LB + d-pad left) for everyone.
     ringPressed: false,
     // Bilbo's taunt of the spiders (mirkwood-foes/: the book's "Attercop" songs draw them to him).
     tauntPressed: false,
